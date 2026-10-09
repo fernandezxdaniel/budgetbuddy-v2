@@ -1,6 +1,7 @@
 (() => {
   "use strict";
-  const API = location.port === "5000" ? "" : "http://127.0.0.1:5000";
+  // Same-origin by default (works on localhost:5000 AND on Render). Only VS Code Live Server (port 5500) needs the full URL.
+  const API = location.port === "5500" ? "http://127.0.0.1:5000" : "";
   const LOGO_FULL = "logo.png";        // ant + BudgetBuddy text (login / sign up)
   const LOGO_MARK = "logo-mark.png";   // ant only (sidebar + browser tab icon)
   const MONTHS = ["january","february","march","april","may","june","july","august","september","october","november","december"];
