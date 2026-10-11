@@ -2,107 +2,152 @@
   "use strict";
   // Same-origin by default (works on localhost:5000 AND on Render). Only VS Code Live Server (port 5500) needs the full URL.
   const API = location.port === "5500" ? "http://127.0.0.1:5000" : "";
-  const LOGO_FULL = "logo.png";        // ant + BudgetBuddy text (login / sign up)
-  const LOGO_MARK = "logo-mark.png";   // ant only (sidebar + browser tab icon)
-  const MONTHS = ["january","february","march","april","may","june","july","august","september","october","november","december"];
+  const LOGO_MARK = "logo-mark.png";
+  const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  const MON = MONTHS.map(m => m.slice(0, 3));
+  const CATS = ["needs", "wants", "savings"];
+  const PRESETS = {
+    needs: ["Rent", "Transportation", "Food", "Water"],
+    wants: ["Online Shopping", "Hobbies"],
+    savings: ["Emergency Fund", "Education Fund"],
+  };
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
-  const store = {
-    get(k, d = null) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
-    set(k, v) { localStorage.setItem(k, JSON.stringify(v)); },
-  };
   const r2 = n => Math.round(n * 100) / 100;
+  const cap = s => s[0].toUpperCase() + s.slice(1);
   const peso = (n, d = "auto", sp = "") => {
     const dec = d === "auto" ? (Number.isInteger(n) ? 0 : 2) : d;
     return (n < 0 ? "-" : "") + "\u20b1" + sp + Math.abs(n).toLocaleString("en-PH", { minimumFractionDigits: dec, maximumFractionDigits: dec });
   };
  
-  async function api(path, body) {
+  /* ---------- dates (always "YYYY-MM-DD" strings) ---------- */
+  const pad = n => String(n).padStart(2, "0");
+  const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+  const parts = s => s.split("-").map(Number);
+  const dayNum = s => { const [y, m, d] = parts(s); return Date.UTC(y, m - 1, d) / 86400000; };
+  const nDays = (a, b) => dayNum(b) - dayNum(a) + 1;
+  const fmtDay = s => { const [, m, d] = parts(s); return `${MON[m - 1]} ${d}`; };
+  const fmtRange = (a, b) => `${fmtDay(a)} \u2013 ${fmtDay(b)}, ${parts(b)[0]}`;
+ 
+  /* ---------- session + server calls ---------- */
+  const token = () => localStorage.getItem("bb_token");
+  const user = () => { try { return JSON.parse(localStorage.getItem("bb_user")); } catch { return null; } };
+  function setSession(r) {
+    localStorage.setItem("bb_token", r.token);
+    localStorage.setItem("bb_user", JSON.stringify(r.user));
+  }
+  async function api(method, path, body, auth = true) {
     let res;
     try {
-      res = await fetch(API + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    } catch { throw new Error("Cannot reach the BudgetBuddy server. Is app.py running?"); }
+      res = await fetch(API + path, {
+        method, body: body ? JSON.stringify(body) : undefined,
+        headers: { "Content-Type": "application/json", ...(auth && token() ? { Authorization: "Bearer " + token() } : {}) },
+      });
+    } catch { throw new Error("Cannot reach the BudgetBuddy server. Please try again in a moment."); }
     let data = {};
-    try { data = await res.json(); } catch { /* ignore */ }
+    try { data = await res.json(); } catch { /* not JSON */ }
+    if (auth && res.status === 401) { localStorage.removeItem("bb_token"); location.href = "index.html"; throw new Error("Please log in again."); }
     if (!data.ok) throw new Error(data.error || "Something went wrong.");
     return data;
   }
  
-  /* ---------- state ---------- */
-  const user = () => store.get("bb_user");
-  const dataKey = () => "bb_data_" + (user() ? user().email : "guest");
-  const load = () => store.get(dataKey(), { income: 0, items: [] });
-  const save = d => store.set(dataKey(), d);
- 
-  function period() {
-    const now = new Date(), lbl = $(".month-label");
-    let y = now.getFullYear(), m = now.getMonth() + 1;
-    if (lbl) {
-      const t = lbl.textContent.trim().split(/\s+/), i = MONTHS.indexOf((t[0] || "").toLowerCase());
-      if (i >= 0 && +t[1]) { m = i + 1; y = +t[1]; }
-    }
-    const dim = new Date(y, m, 0).getDate();
-    let today = now.getDate();
-    if (y !== now.getFullYear() || m !== now.getMonth() + 1)
-      today = y * 12 + m < now.getFullYear() * 12 + now.getMonth() + 1 ? dim : 1;
-    return { year: y, month: m, today, dim };
+  /* ---------- the plan lives on the server (database); this is the latest copy ---------- */
+  let plan = null, result = null, chain = Promise.resolve();
+  async function loadPlan() {
+    const r = await api("GET", "/api/plan?today=" + todayISO());
+    plan = r.plan; result = r.result;
+  }
+  // Saves one change. The server (Python) checks the rules (50/30/20 limits...) and returns true/false.
+  function savePlan(next) {
+    chain = chain.then(async () => {
+      try {
+        const r = await api("PUT", "/api/plan", { plan: next, today: todayISO() });
+        plan = r.plan; result = r.result; return true;
+      } catch (e) { alert(e.message); return false; }
+    });
+    return chain;
   }
  
-  async function calculate(data) {
-    const d = data || load(), p = period();
-    const res = await api("/api/calculate", { year: p.year, month: p.month, today: p.today, income: d.income, items: d.items });
-    if (!data) store.set("bb_result", res);
-    return res;
-  }
- 
-  /* ---------- shared look ---------- */
+  /* ---------- injected styles (your own CSS files are not touched) ---------- */
   function injectCSS() {
     const s = document.createElement("style");
     s.textContent = `
-      .bb-logo{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:12px}
-      .bb-logo img{width:min(70%,230px);height:auto}
-      .brand img{background:#fff;border-radius:12px;padding:3px;object-fit:contain}
+      .bb-has-icon input{padding-left:30px}
+      .bb-has-icon label{left:30px}
+      .bb-icon{position:absolute;left:2px;top:50%;transform:translateY(-50%);width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;color:var(--text-soft,#496b86);pointer-events:none}
       .bb-list{list-style:none;margin:0;padding:8px 14px;max-height:340px;overflow:auto}
       .bb-list li{display:flex;align-items:center;gap:8px;padding:10px 6px;border-bottom:1px solid #2b303a;font-size:14px}
       .bb-list .nm{flex:1;min-width:0;overflow-wrap:anywhere}
-      .bb-list small{color:#a8b0be}
       .bb-minus{width:26px;height:26px;padding:0;border-radius:50%;border:1px solid #f97066;background:none;color:#f97066;font-size:18px;line-height:1;cursor:pointer}
       .bb-minus:hover{background:#f97066;color:#fff}
+      .bb-total{padding:10px 20px;font-size:12px;color:#a8b0be;border-bottom:1px solid #2b303a}
       .bb-addspecific{display:block;width:calc(100% - 40px);margin:12px 20px 0;padding:9px;border-radius:12px;border:1px dashed #274258;background:none;color:#40c0e7;font:inherit;font-size:13px;cursor:pointer}
       .bb-addspecific:hover{background:#101f2c}
-      .bb-removeopt{border:0;background:none;color:#b42318;font:inherit;font-size:12px;cursor:pointer;margin:-6px 0 10px;padding:0}
-      .bb-dialog{border:0;border-radius:18px;padding:24px;width:min(92vw,360px);font-family:Poppins,Arial,sans-serif}
+      .bb-income-btn{position:absolute;top:20px;right:22px;padding:8px 14px;border-radius:12px;border:1px solid #274258;background:#101f2c;color:#40c0e7;font:inherit;font-size:13px;cursor:pointer}
+      .bb-income-btn:hover{filter:brightness(1.3)}
+      .bb-dialog{border:0;border-radius:18px;padding:24px;width:min(92vw,400px);font-family:Poppins,Arial,sans-serif}
       .bb-dialog::backdrop{background:rgba(0,0,0,.45)}
-      .bb-dialog h3{margin:0 0 12px;text-transform:capitalize}
-      .bb-dialog label{display:block;font-size:13px;margin-bottom:12px}
+      .bb-dialog h3{margin:0 0 10px;text-transform:capitalize}
       .bb-dialog [hidden]{display:none!important}
-      .bb-dialog input,.bb-dialog select{display:block;width:100%;margin-top:4px;padding:9px 10px;border:1px solid #b8bec8;border-radius:10px;font:inherit}
+      .bb-dialog label{display:block;font-size:13px;margin-bottom:12px}
+      .bb-dialog input{display:block;width:100%;margin-top:4px;padding:9px 10px;border:1px solid #b8bec8;border-radius:10px;font:inherit}
+      .bb-hint{margin:0 0 12px;font-size:12px;color:#596273;line-height:1.5}
+      .bb-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+      .bb-dialog .bb-chip{display:inline-block;margin:0;position:relative}
+      .bb-dialog .bb-chip input{position:absolute;opacity:0;width:0;height:0;margin:0;padding:0;border:0}
+      .bb-chip span{display:inline-block;padding:8px 14px;border:1px solid #b8bec8;border-radius:999px;font-size:13px;cursor:pointer;user-select:none}
+      .bb-chip span:hover{background:#eef2f8}
+      .bb-chip input:checked + span{background:#112d60;border-color:#112d60;color:#fff}
+      .bb-chip input:focus-visible + span{outline:3px solid #40c0e7;outline-offset:2px}
       .bb-row{display:flex;justify-content:flex-end;gap:10px}
       .bb-row button{padding:9px 18px;border-radius:10px;border:1px solid #b8bec8;background:#fff;font:inherit;cursor:pointer}
       .bb-row .bb-primary{background:#112d60;color:#fff;border-color:#112d60}
-      .bb-income-btn{position:absolute;top:20px;right:22px;padding:8px 14px;border-radius:12px;border:1px solid #274258;background:#101f2c;color:#40c0e7;font:inherit;font-size:13px;cursor:pointer}
-      .bb-income-btn:hover{filter:brightness(1.3)}
-      .bb-total{padding:10px 20px;font-size:12px;color:#a8b0be;border-bottom:1px solid #2b303a}
+      .bb-cal-nav{display:flex;align-items:center;gap:6px}
+      .bb-cal-nav button{width:26px;height:26px;padding:0;border:1px solid #c5cad1;border-radius:8px;background:#fff;color:#112d60;font-size:16px;line-height:1;cursor:pointer}
+      .calendar-grid span.bb-day{cursor:pointer}
+      .calendar-grid span.bb-day:hover{background:#e3eaf5}
+      .bb-readonly .calendar-grid span.bb-day{cursor:default}
+      .calendar-grid span.bb-in{background:#d4ecf8}
+      .calendar-grid span.bb-edge{background:#40c0e7;color:#08243b;font-weight:600}
+      .calendar-grid span.today{box-shadow:inset 0 0 0 2px #112d60}
+      .bb-item-row th{padding:12px 12px 12px 44px!important;font-size:15px!important;color:#d9dfea}
+      .bb-item-row td{padding:12px!important;font-size:15px!important}
+      .bb-cell{width:100%;padding:6px 8px;border:1px solid #274258;border-radius:8px;background:#101f2c;color:#fff;font:inherit;font-size:14px;text-align:right}
+      .bb-cell:focus{outline:2px solid #40c0e7}
       .bb-reco{margin-top:28px}
       .bb-reco h2{margin:0 0 6px;font-size:22px}
       .bb-stats{margin:0 0 14px;color:#596273;font-size:12px;line-height:1.7}
       .bb-reco-item{padding:14px 18px;margin-bottom:12px;border-radius:16px;background:#fff;border:1px solid #dfe3ea;border-left:6px solid #175cd3}
-      .bb-reco-item.danger{border-left-color:#b42318}.bb-reco-item.warning{border-left-color:#b54708}
-      .bb-reco-item.good{border-left-color:#167048}
+      .bb-reco-item.danger{border-left-color:#b42318}.bb-reco-item.warning{border-left-color:#b54708}.bb-reco-item.good{border-left-color:#167048}
       .bb-reco-item h3{margin:0 0 4px;font-size:15px}.bb-reco-item p{margin:0;font-size:13px;line-height:1.6;color:#344054}`;
     document.head.appendChild(s);
     const l = document.createElement("link"); l.rel = "icon"; l.href = LOGO_MARK; document.head.appendChild(l);
   }
  
-  /* ---------- login / sign up ---------- */
+  /* ---------- login + sign up ---------- */
+  const ICONS = {
+    user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8"/>',
+    mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>',
+    lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  };
+  function addIcons() {                       // small icons inside the input fields
+    $$(".input-wrap").forEach(w => {
+      const input = $("input", w); if (!input) return;
+      const kind = input.type === "email" ? "mail" : input.type === "password" ? "lock" : "user";
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("class", "bb-icon"); svg.setAttribute("aria-hidden", "true");
+      svg.innerHTML = ICONS[kind];
+      w.classList.add("bb-has-icon"); w.prepend(svg);
+    });
+  }
+ 
   function initLogin() {
     const form = $(".login-form");
     form.addEventListener("submit", async e => {
       e.preventDefault();
       const btn = $(".login-btn", form); btn.disabled = true;
       try {
-        const r = await api("/api/login", { email: $("#email").value.trim(), password: $("#password").value });
-        store.set("bb_user", r.user);
+        setSession(await api("POST", "/api/login", { email: $("#email").value.trim(), password: $("#password").value }, false));
         location.href = "dashboard.html";
       } catch (err) { alert(err.message); } finally { btn.disabled = false; }
     });
@@ -118,18 +163,18 @@
       if (pw !== $("#confirm-password").value) return alert("Passwords do not match.");
       const btn = $(".login-btn", form); btn.disabled = true;
       try {
-        await api("/api/signup", { name: $("#username").value.trim(), email: $("#email").value.trim(), password: pw });
-        alert("Account created! Please log in.");
-        location.href = "index.html";
+        // the server saves the account AND signs the user in, so we go straight to the dashboard
+        setSession(await api("POST", "/api/signup", { name: $("#username").value.trim(), email: $("#email").value.trim(), password: pw }, false));
+        location.href = "dashboard.html";
       } catch (err) { alert(err.message); } finally { btn.disabled = false; }
     });
   }
  
-  /* ---------- dashboard shell (sidebar, logo, calendar) ---------- */
+  /* ---------- shared dashboard bits ---------- */
   function shell() {
     const u = user();
-    if (!u) { location.href = "index.html"; return false; }
-    $$(".brand img").forEach(i => { i.src = LOGO_MARK; i.alt = "BudgetBuddy logo"; });
+    if (!u || !token()) { location.href = "index.html"; return false; }
+    $$(".brand img").forEach(i => { i.src = LOGO_MARK; i.alt = "BudgetBuddy logo"; i.style.cssText = "background:#fff;border-radius:12px;padding:3px;object-fit:contain"; });
     $$('a[href="./index.html"]').forEach(a => a.setAttribute("href", "dashboard.html"));
     const nm = $(".profile-name"), em = $(".profile-email"), av = $(".avatar");
     if (nm) nm.textContent = u.name;
@@ -137,27 +182,66 @@
     if (av) av.textContent = u.name.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join("");
     return true;
   }
+  function periodLabel() {
+    const l = $(".month-label");
+    if (l && plan.start && plan.end) l.textContent = fmtRange(plan.start, plan.end);
+  }
  
-  function moveToday(p) {
-    const grid = $(".calendar-grid");
-    if (!grid) return;
-    const cells = $$("span:not(.weekday)", grid).filter(s => s.textContent.trim());
-    cells.forEach(s => { s.classList.remove("today"); s.removeAttribute("aria-current"); });
-    const t = cells.find(s => +s.textContent === p.today);
-    if (t) { t.classList.add("today"); t.setAttribute("aria-current", "date"); }
-    const b = $(".calendar-badge");
-    if (b) b.textContent = (b.textContent.startsWith("Selected") ? "Selected: " : "Today: ") +
-      MONTHS[p.month - 1].slice(0, 3).replace(/^./, c => c.toUpperCase()) + " " + p.today;
+  // Calendar: month arrows + pick a START and an END date. editable=false only shows the saved range.
+  function initCalendar(editable, onPick) {
+    const box = $(".calendar"); if (!box) return () => {};
+    const grid = $(".calendar-grid", box), h2 = $(".calendar-heading h2", box), badge = $(".calendar-badge", box);
+    const nav = document.createElement("div"); nav.className = "bb-cal-nav";
+    const mk = (t, label) => { const b = document.createElement("button"); b.type = "button"; b.textContent = t; b.setAttribute("aria-label", label); return b; };
+    const prev = mk("\u2039", "Previous month"), next = mk("\u203a", "Next month");
+    h2.before(nav); nav.append(prev, h2, next);
+    box.classList.toggle("bb-readonly", !editable);
+    let [vy, vm] = parts(plan.start || todayISO());
+    let pending = null;                         // first click, waiting for the end date
+ 
+    function draw() {
+      h2.textContent = `${MONTHS[vm - 1]} ${vy}`;
+      const today = todayISO(), a = plan.start, b = plan.end;
+      const offset = (new Date(vy, vm - 1, 1).getDay() + 6) % 7, dim = new Date(vy, vm, 0).getDate();
+      const frag = document.createDocumentFragment();
+      ["M", "T", "W", "T", "F", "S", "S"].forEach(l => { const s = document.createElement("span"); s.className = "weekday"; s.textContent = l; frag.append(s); });
+      for (let i = 0; i < offset; i++) frag.append(document.createElement("span"));
+      for (let d = 1; d <= dim; d++) {
+        const ds = `${vy}-${pad(vm)}-${pad(d)}`, s = document.createElement("span");
+        s.className = "bb-day"; s.textContent = d; s.dataset.date = ds;
+        if (ds === today) { s.classList.add("today"); s.setAttribute("aria-current", "date"); }
+        if (pending) { if (ds === pending) s.classList.add("bb-edge"); }
+        else if (a && b && ds >= a && ds <= b) { s.classList.add("bb-in"); if (ds === a || ds === b) s.classList.add("bb-edge"); }
+        frag.append(s);
+      }
+      grid.replaceChildren(frag);
+      badge.textContent = pending ? "Now pick the end date"
+        : (a && b ? `${fmtDay(a)} \u2013 ${fmtDay(b)} \u00b7 ${nDays(a, b)} days` : (editable ? "Pick a start date" : "No dates picked"));
+    }
+    prev.addEventListener("click", () => { if (--vm < 1) { vm = 12; vy--; } draw(); });
+    next.addEventListener("click", () => { if (++vm > 12) { vm = 1; vy++; } draw(); });
+    if (editable) grid.addEventListener("click", async e => {
+      const t = e.target.closest(".bb-day"); if (!t) return;
+      if (!pending) { pending = t.dataset.date; draw(); return; }
+      let x = pending, y = t.dataset.date; if (y < x) [x, y] = [y, x];
+      pending = null;
+      await onPick(x, y);
+      draw();
+    });
+    draw();
+    return draw;
   }
  
   function renderReco(res, anchor) {
-    const m = res.metrics, box = document.createElement("section");
-    box.className = "bb-reco";
-    const h = document.createElement("h2"); h.textContent = "Recommendations for you";
-    const st = document.createElement("p"); st.className = "bb-stats";
-    st.textContent = `Daily average ${peso(m.daily_average)} \u00b7 Last 7 days ${peso(m.last_7_days)} \u00b7 ` +
-      `Projected month-end spending ${peso(m.projected_spending)} \u00b7 Safe daily allowance ${peso(m.daily_allowance)}`;
-    box.append(h, st);
+    $$(".bb-reco").forEach(x => x.remove());
+    const m = res.metrics, box = document.createElement("section"); box.className = "bb-reco";
+    const h = document.createElement("h2"); h.textContent = "Recommendations for you"; box.append(h);
+    if (res.period.set && res.entered_any) {
+      const st = document.createElement("p"); st.className = "bb-stats";
+      st.textContent = `Daily average ${peso(m.daily_average)} \u00b7 Last 7 days ${peso(m.last_7_days)} \u00b7 ` +
+        `Projected spending by ${fmtDay(res.period.end)} ${peso(m.projected_spending)} \u00b7 Safe daily allowance ${peso(m.daily_allowance)}`;
+      box.append(st);
+    }
     res.recommendations.forEach(r => {
       const a = document.createElement("article"); a.className = "bb-reco-item " + r.level;
       const t = document.createElement("h3"); t.textContent = r.title;
@@ -167,17 +251,8 @@
     anchor.insertAdjacentElement("afterend", box);
   }
  
-  /* ---------- dashboard (needs / wants / savings cards) ---------- */
-  const PRESETS = {
-    needs: ["Rent", "Transportation", "Food", "Water"],
-    wants: ["Online Shopping", "Hobbies"],
-    savings: ["Emergency Fund", "Education Fund"],
-  };
-  const customKey = () => "bb_custom_" + (user() ? user().email : "guest");
-  const loadCustom = () => Object.assign({ needs: [], wants: [], savings: [] }, store.get(customKey(), {}));
-  const saveCustom = c => store.set(customKey(), c);
+  /* ---------- dialogs ---------- */
   const ROW = `<div class="bb-row"><button value="cancel" formnovalidate>Cancel</button><button value="ok" class="bb-primary">Save</button></div>`;
- 
   function dialog(html, read, setup) {
     return new Promise(resolve => {
       const dlg = document.createElement("dialog"); dlg.className = "bb-dialog";
@@ -190,141 +265,101 @@
       dlg.showModal();
     });
   }
- 
-  function askItem(cat, p, startOther) {
-    const custom = loadCustom();
-    return dialog(`<form method="dialog"><h3>Add ${cat}</h3>
-      <label>What is it for?
-        <select name="preset" required>
-          <option value="" disabled selected>Choose from the list\u2026</option>
-          <option value="__other">+ Add a specific item\u2026</option>
-        </select></label>
-      <button type="button" class="bb-removeopt" hidden>\u2212 Remove this option from my list</button>
+  // The choices are shown directly as buttons: just click one (no "choose from the list" box, no day field).
+  function askItem(cat, hint, used, startOther) {
+    const taken = new Set(used.map(n => n.toLowerCase()));
+    const names = PRESETS[cat].filter(n => !taken.has(n.toLowerCase()));
+    return dialog(`<form method="dialog"><h3>Add ${cat}</h3><p class="bb-hint"></p>
+      <div class="bb-chips" role="radiogroup" aria-label="Choose an item"></div>
       <label class="bb-other" hidden>Name of the item<input name="name" maxlength="60"></label>
-      <label>Amount (\u20b1)<input name="amount" type="number" min="0.01" max="1000000000" step="0.01" required></label>
-      <label>Day of month<input name="day" type="number" min="1" max="${p.dim}" step="1" value="${p.today}" required></label>
+      <label>Budget amount (\u20b1)<input name="amount" type="number" min="0.01" max="${hint.remaining}" step="0.01" required></label>
       ${ROW}</form>`,
       f => {
         const other = f.get("preset") === "__other";
-        return { name: String(other ? f.get("name") : f.get("preset")).trim(),
-                 amount: Number(f.get("amount")), day: parseInt(f.get("day"), 10), isNew: other };
+        return { name: String(other ? f.get("name") : f.get("preset")).trim(), amount: Number(f.get("amount")) };
       },
       dlg => {
-        const sel = $("select", dlg), box = $(".bb-other", dlg), inp = $("input[name=name]", dlg), rm = $(".bb-removeopt", dlg);
-        const otherOpt = $('option[value="__other"]', sel);
-        const fill = () => {
-          $$("option.bb-opt", sel).forEach(o => o.remove());
-          [...PRESETS[cat], ...custom[cat]].forEach(n => {
-            const o = document.createElement("option"); o.className = "bb-opt"; o.value = n; o.textContent = n; otherOpt.before(o);
+        $(".bb-hint", dlg).textContent = `You can still budget ${peso(hint.remaining, 2)} of your ${peso(hint.limit, 2)} ${cat} limit (${hint.ratio}% of your income).`;
+        const box = $(".bb-chips", dlg), other = $(".bb-other", dlg), nameInp = $("input[name=name]", dlg), amount = $("input[name=amount]", dlg);
+        [...names, "__other"].forEach((n, i) => {
+          const label = document.createElement("label"); label.className = "bb-chip";
+          const radio = document.createElement("input"); radio.type = "radio"; radio.name = "preset"; radio.value = n; radio.required = i === 0;
+          const text = document.createElement("span"); text.textContent = n === "__other" ? "+ Add specific item" : n;
+          label.append(radio, text); box.append(label);
+          radio.addEventListener("change", () => {
+            const o = n === "__other"; other.hidden = !o; nameInp.required = o; (o ? nameInp : amount).focus();
           });
-        };
-        fill();
-        sel.addEventListener("change", () => {
-          const other = sel.value === "__other";
-          box.hidden = !other; inp.required = other; if (other) inp.focus();
-          rm.hidden = !custom[cat].includes(sel.value);
         });
-        rm.addEventListener("click", () => {
-          custom[cat] = custom[cat].filter(n => n !== sel.value); saveCustom(custom);
-          fill(); sel.value = ""; rm.hidden = true;
-        });
-        if (startOther) { sel.value = "__other"; sel.dispatchEvent(new Event("change")); }
+        if (startOther) { const r = $('input[value="__other"]', box); r.checked = true; r.dispatchEvent(new Event("change")); }
       });
   }
- 
   function askIncome(current) {
     return dialog(`<form method="dialog"><h3>Monthly income</h3>
-      <label>Allowance or earnings per month (\u20b1)
+      <label>Allowance or earnings (\u20b1)
         <input name="income" type="number" min="0.01" max="1000000000" step="0.01" value="${current > 0 ? current : ""}" required></label>
       ${ROW}</form>`, f => Number(f.get("income")));
   }
  
-  function askConfirm(msg) {
-    return dialog(`<form method="dialog"><h3>Heads up</h3><p style="font-size:14px;line-height:1.6"></p>
-      <div class="bb-row"><button value="cancel" formnovalidate>Go back</button><button value="ok" class="bb-primary">Add anyway</button></div></form>`,
-      () => true, d => { $("p", d).textContent = msg; }).then(v => v === true);
-  }
- 
+  /* ---------- dashboard page ---------- */
   function initDashboard() {
-    const p = period(); moveToday(p);
     const cards = $$(".budget-card");
     const [incCard, balCard] = $$(".summary-card");
     const incAmt = $(".amount", incCard), balAmt = $(".amount", balCard);
     incCard.style.position = "relative";
     const incBtn = document.createElement("button");
-    incBtn.type = "button"; incBtn.className = "bb-income-btn"; incBtn.textContent = "+ Set income";
-    incCard.appendChild(incBtn);
+    incBtn.type = "button"; incBtn.className = "bb-income-btn"; incCard.appendChild(incBtn);
  
-    async function refreshBalance() {
-      try {
-        const res = await calculate();
-        balAmt.textContent = peso(res.totals.balance, 2, " ");
-        cards.forEach(card => {
-          const cat = $("h3", card).textContent.trim().toLowerCase(), c = res.categories[cat];
-          let t = $(".bb-total", card);
-          if (!t) { t = document.createElement("div"); t.className = "bb-total"; $(".budget-header", card).after(t); }
-          t.textContent = `Total ${peso(c.actual, 2)} of ${peso(c.budget, 2)} plan (${c.ratio}%)`;
-          const bad = cat !== "savings" && c.actual > c.budget;
-          t.style.color = bad ? "#f97066" : (cat === "savings" && c.budget > 0 && c.actual >= c.budget ? "#6ce9a6" : "#a8b0be");
-        });
-      } catch (e) { console.warn(e.message); }
-    }
+    const redrawCal = initCalendar(true, async (a, b) => { if (await savePlan({ ...plan, start: a, end: b })) render(); });
  
     function render() {
-      const d = load();
-      incAmt.textContent = peso(d.income, 2, " ");
-      incBtn.textContent = d.income > 0 ? "Edit income" : "+ Set income";
+      incAmt.textContent = peso(plan.income, 2, " ");
+      balAmt.textContent = peso(result.totals.balance, 2, " ");
+      incBtn.textContent = plan.income > 0 ? "Edit income" : "+ Set income";
+      periodLabel(); redrawCal();
       cards.forEach(card => {
-        const cat = $("h3", card).textContent.trim().toLowerCase();
+        const cat = $("h3", card).textContent.trim().toLowerCase(), c = result.categories[cat];
+        let t = $(".bb-total", card);
+        if (!t) { t = document.createElement("div"); t.className = "bb-total"; $(".budget-header", card).after(t); }
+        t.textContent = `Budgeted ${peso(c.budget, 2)} of ${peso(c.limit, 2)} limit (${c.ratio}%)`;
+        t.style.color = c.limit > 0 && c.budget >= c.limit ? "#6ce9a6" : "#a8b0be";
         let ul = $(".bb-list", card);
         if (!ul) { ul = document.createElement("ul"); ul.className = "bb-list"; card.appendChild(ul); }
-        const mine = d.items.filter(i => i.category === cat);
+        const mine = plan.items.filter(i => i.category === cat);
         $(".empty-state", card).style.display = mine.length ? "none" : "";
         ul.replaceChildren(...mine.map(i => {
           const li = document.createElement("li");
           const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = i.name;
-          const sm = document.createElement("small"); sm.textContent = "day " + i.day;
-          const am = document.createElement("span"); am.textContent = peso(i.amount, 2);
+          const am = document.createElement("span"); am.textContent = peso(i.budget, 2);
           const x = document.createElement("button");
           x.type = "button"; x.className = "bb-minus"; x.textContent = "\u2212"; x.dataset.id = i.id;
-          x.title = "Remove this entry"; x.setAttribute("aria-label", "Remove " + i.name);
-          li.append(nm, sm, am, x); return li;
+          x.title = "Remove this item"; x.setAttribute("aria-label", "Remove " + i.name);
+          li.append(nm, am, x); return li;
         }));
       });
-      refreshBalance();
     }
  
     async function setIncome() {
-      const v = await askIncome(load().income);
-      if (v === null) return;
-      const d = load(); d.income = v; save(d); render();
+      const v = await askIncome(plan.income);
+      if (v !== null && await savePlan({ ...plan, income: v })) render();
     }
     incBtn.addEventListener("click", setIncome);
  
     async function addTo(cat, startOther) {
-      if (load().income <= 0) {
+      if (plan.income <= 0) {
         alert("Please set your monthly income first.");
         await setIncome();
-        if (load().income <= 0) return;
+        if (plan.income <= 0) return;
       }
-      const v = await askItem(cat, p, startOther);
+      if (!plan.start || !plan.end)
+        return alert("Please pick your budget dates on the calendar first: click a start date, then an end date.");
+      const c = result.categories[cat], remaining = r2(c.limit - c.budget);
+      if (remaining < 0.01)
+        return alert(`${cap(cat)} is fully budgeted (limit ${peso(c.limit, 2)}). Lower another ${cat} item first.`);
+      const v = await askItem(cat, { remaining, limit: c.limit, ratio: c.ratio }, plan.items.filter(i => i.category === cat).map(i => i.name), startOther);
       if (!v) return;
       if (!v.name) return alert("Please enter a name.");
-      const item = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), category: cat, name: v.name, amount: v.amount, day: v.day };
-      // let the Python calculation warn before the entry breaks the plan
-      try {
-        const d0 = load(), res = await calculate({ ...d0, items: [...d0.items, item] });
-        let msg = "";
-        if (res.totals.balance < 0) msg = `This puts you ${peso(-res.totals.balance, 2)} over your income.`;
-        else if (cat !== "savings" && res.categories[cat].left < 0)
-          msg = `${cat[0].toUpperCase() + cat.slice(1)} would be ${peso(-res.categories[cat].left, 2)} over your ${res.categories[cat].ratio}% plan.`;
-        if (msg && !(await askConfirm(msg))) return;
-      } catch (e) { console.warn(e.message); }
-      if (v.isNew) {            // remember specific items so they appear in the list next time
-        const c = loadCustom(), known = [...PRESETS[cat], ...c[cat]].map(n => n.toLowerCase());
-        if (!known.includes(v.name.toLowerCase())) { c[cat].push(v.name); saveCustom(c); }
-      }
-      const d = load(); d.items.push(item); save(d); render();
+      const item = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), category: cat, name: v.name, budget: v.amount, log: [] };
+      if (await savePlan({ ...plan, items: [...plan.items, item] })) render();
     }
  
     cards.forEach(card => {
@@ -334,90 +369,139 @@
       sp.type = "button"; sp.className = "bb-addspecific"; sp.textContent = "+ Add specific item";
       $(".budget-header", card).after(sp);
       sp.addEventListener("click", () => addTo(cat, true));
-      card.addEventListener("click", e => {
+      card.addEventListener("click", async e => {
         const id = e.target.dataset && e.target.dataset.id;
-        if (!id) return;
-        const d = load(); d.items = d.items.filter(i => i.id !== id); save(d); render();
+        if (id && await savePlan({ ...plan, items: plan.items.filter(i => i.id !== id) })) render();
       });
     });
  
-    $(".submit-button").addEventListener("click", async () => {
-      const d = load();
-      if (d.income <= 0) return alert("Set your income first (click Set income).");
-      if (!d.items.length) return alert("Add at least one expense or saving first.");
-      try { await calculate(); location.href = "dashboard2.html"; } catch (e) { alert(e.message); }
+    $(".submit-button").addEventListener("click", () => {
+      if (plan.income <= 0) return alert("Set your income first (press Set income).");
+      if (!plan.start || !plan.end) return alert("Pick your budget dates on the calendar first.");
+      if (!plan.items.length) return alert("Add at least one item first.");
+      location.href = "dashboard2.html";
     });
     render();
   }
  
-  /* ---------- result pages ---------- */
-  async function getResult() {
-    try { return await calculate(); }
-    catch (e) { const c = store.get("bb_result"); if (c) return c; alert(e.message); return null; }
-  }
-  function fillSummary(res) {
-    const a = $$(".summary-card .amount");
-    if (a[0]) a[0].textContent = peso(res.income, 2, " ");
-    if (a[1]) a[1].textContent = peso(res.totals.balance, 2, " ");
+  /* ---------- Expenses Tracker page ---------- */
+  function addLog(log, entry) {                 // merge entries of the same day so the list stays short
+    const m = new Map();
+    [...log, entry].forEach(e => m.set(e.date, r2((m.get(e.date) || 0) + e.amount)));
+    return [...m].map(([date, amount]) => ({ date, amount }));
   }
  
-  async function initTracker() {
-    moveToday(period());
-    const res = await getResult(); if (!res) return;
-    fillSummary(res);
-    const rows = $$(".expense-table tbody tr"), RED = "#f97066", GREEN = "#6ce9a6";
-    const put = (cells, b, a, l, color) => {
-      cells[0].textContent = peso(b, 2); cells[1].textContent = peso(a, 2);
-      cells[2].textContent = peso(l, 2); cells[2].style.color = color || "";
-    };
-    ["needs", "wants", "savings"].forEach((c, i) => {
-      const v = res.categories[c];
-      put($$("td", rows[i]), v.budget, v.actual, v.left, c === "savings" ? (v.left <= 0 ? GREEN : "") : (v.left < 0 ? RED : GREEN));
-    });
-    const t = res.totals;
-    put($$(".expense-table tfoot td"), t.budget, t.actual, t.left, t.left < 0 ? RED : GREEN);
-    const note = $("#table-note");
-    if (note) note.textContent = `Plan: 50% needs, 30% wants, 20% savings of your ${peso(res.income, 2)} income. Left = Budget \u2212 Actual.`;
-    renderReco(res, $(".tracker"));
+  function initTracker() {
+    initCalendar(false);
+    const GREEN = "#6ce9a6", RED = "#f97066", money = n => peso(n, 2);
+    const catRows = $$(".expense-table tbody tr");
+    const baseDesc = catRows.map(r => $(".category-description", r).textContent.trim());
+ 
+    // Left stays "-" until an Actual has been entered.
+    function leftCell(td, budget, actual, entered, savings) {
+      if (!entered) { td.textContent = "\u2014"; td.style.color = ""; return; }
+      const left = r2(budget - actual);
+      td.textContent = money(left);
+      td.style.color = savings ? (left <= 0 ? GREEN : "") : (left >= 0 ? GREEN : RED);
+    }
+    function cellInput(value, label, onCommit) {
+      const inp = document.createElement("input");
+      inp.type = "number"; inp.className = "bb-cell"; inp.min = "0"; inp.step = "0.01"; inp.max = "1000000000";
+      inp.value = Number(value).toFixed(2); inp.setAttribute("aria-label", label);
+      inp.addEventListener("focus", () => inp.select());
+      inp.addEventListener("change", () => {
+        const v = Number(inp.value);
+        if (inp.value === "" || !Number.isFinite(v) || v < 0) { alert("Please enter an amount of 0 or more."); render(); return; }
+        onCommit(r2(v));
+      });
+      return inp;
+    }
+    async function editBudget(it, v) {          // the server refuses anything over the 50/30/20 limit
+      if (v !== it.budget) await savePlan({ ...plan, items: plan.items.map(i => i.id === it.id ? { ...i, budget: v } : i) });
+      render();
+    }
+    async function editActual(it, v) {          // each change is stored as a dated entry (feeds the segment tree)
+      if (!it.entered || v !== it.actual) {
+        const entry = { date: todayISO(), amount: r2(v - it.actual) };
+        await savePlan({ ...plan, items: plan.items.map(i => i.id === it.id ? { ...i, log: addLog(i.log, entry) } : i) });
+      }
+      render();
+    }
+ 
+    function render() {
+      const res = result;
+      $$(".bb-item-row").forEach(r => r.remove());
+      CATS.forEach((cat, i) => {
+        const row = catRows[i], c = res.categories[cat], cells = $$("td", row);
+        cells[0].textContent = money(c.budget); cells[1].textContent = money(c.actual);
+        leftCell(cells[2], c.budget, c.actual, c.entered, cat === "savings");
+        $(".category-description", row).textContent = `${baseDesc[i]} \u00b7 Limit ${money(c.limit)} (${c.ratio}%)`;
+        let anchor = row;
+        c.items.forEach(it => {                 // the items chosen on the dashboard, under their category
+          const tr = document.createElement("tr"); tr.className = "bb-item-row";
+          const th = document.createElement("th"); th.scope = "row"; th.textContent = it.name;
+          const tdB = document.createElement("td"); tdB.className = "number"; tdB.append(cellInput(it.budget, `${it.name} budget`, v => editBudget(it, v)));
+          const tdA = document.createElement("td"); tdA.className = "number"; tdA.append(cellInput(it.actual, `${it.name} actual`, v => editActual(it, v)));
+          const tdL = document.createElement("td"); tdL.className = "number";
+          leftCell(tdL, it.budget, it.actual, it.entered, cat === "savings");
+          tr.append(th, tdB, tdA, tdL); anchor.after(tr); anchor = tr;
+        });
+      });
+      const t = res.totals, tf = $$(".expense-table tfoot td");
+      tf[0].textContent = money(t.budget); tf[1].textContent = money(t.actual);
+      leftCell(tf[2], t.budget, t.actual, res.entered_any, false);
+      const a = $$(".summary-card .amount");
+      if (a[0]) a[0].textContent = peso(res.income, 2, " ");
+      if (a[1]) a[1].textContent = peso(t.balance, 2, " ");
+      const note = $("#table-note");
+      if (note) note.textContent = `Click a Budget or Actual box to change it. Budgets cannot go over ${money(res.categories.needs.limit)} (50%) for needs, ` +
+        `${money(res.categories.wants.limit)} (30%) for wants and ${money(res.categories.savings.limit)} (20%) for savings. Left appears after you enter an Actual.`;
+      renderReco(res, $(".tracker"));
+    }
+    render();
   }
  
-  async function initAnalytics() {
-    const res = await getResult(); if (!res) return;
-    const cats = ["needs", "wants", "savings"], C = res.categories;
-    const maxV = Math.max(1, ...cats.flatMap(c => [C[c].budget, C[c].actual]));
+  /* ---------- Analytics page ---------- */
+  function initAnalytics() {
+    const res = result, C = res.categories;
+    const maxV = Math.max(1, ...CATS.flatMap(c => [C[c].budget, C[c].actual]));
     const mag = Math.pow(10, Math.floor(Math.log10(maxV)));
     const top = Math.ceil(maxV * 1.1 / mag) * mag;
     $$(".tick").forEach((t, i) => { t.textContent = peso(top * (1 - i / 4)); });
     $$(".bar-pair").forEach((pair, i) => {
-      const v = C[cats[i]];
+      const v = C[CATS[i]];
       [["budget", v.budget], ["actual", v.actual]].forEach(([k, val]) => {
         const bar = $(".bar." + k, pair);
         bar.style.setProperty("--height", (val / top * 100) + "%");
         $(".bar-value", bar).textContent = peso(val);
       });
     });
-    $(".plot").setAttribute("aria-label", cats.map(c => `${c}: budget ${C[c].budget} pesos, actual ${C[c].actual} pesos.`).join(" "));
+    $(".plot").setAttribute("aria-label", CATS.map(c => `${c}: budget ${C[c].budget} pesos, actual ${C[c].actual} pesos.`).join(" "));
     $$(".insight").forEach((box, i) => {
-      const c = cats[i], v = C[c], p = $("p", box), s = $("small", box);
-      let ok, text;
-      if (c === "savings") {
-        const diff = r2(v.actual - v.budget); ok = diff >= 0;
-        text = diff === 0 ? "Target reached" : ok ? `${peso(diff)} above target` : `${peso(-diff)} short of target`;
+      const c = CATS[i], v = C[c], p = $("p", box), s = $("small", box);
+      let cls = "", text;
+      if (!v.entered) text = "No actual entered yet";
+      else if (c === "savings") {
+        const diff = r2(v.actual - v.budget);
+        text = diff === 0 ? "Target reached" : diff > 0 ? `${peso(diff)} above target` : `${peso(-diff)} short of target`;
+        cls = diff >= 0 ? "positive" : "warning";
       } else {
-        ok = v.left >= 0;
-        text = v.left === 0 ? "Exactly on budget" : ok ? `${peso(v.left)} below budget` : `${peso(-v.left)} over budget`;
+        text = v.left === 0 ? "Exactly on budget" : v.left > 0 ? `${peso(v.left)} below budget` : `${peso(-v.left)} over budget`;
+        cls = v.left >= 0 ? "positive" : "warning";
       }
-      p.textContent = text; p.className = ok ? "positive" : "warning";
+      p.textContent = text; p.className = cls;
       s.textContent = c === "savings" ? `Target ${peso(v.budget)} \u00b7 Saved ${peso(v.actual)}` : `Budget ${peso(v.budget)} \u00b7 Actual ${peso(v.actual)}`;
     });
     renderReco(res, $(".insights"));
   }
  
   /* ---------- start ---------- */
-  document.addEventListener("DOMContentLoaded", () => {
+  document.addEventListener("DOMContentLoaded", async () => {
     injectCSS();
-    if ($(".login-form")) { $("#username") ? initSignup() : initLogin(); return; }
+    if ($(".login-form")) { addIcons(); $("#username") ? initSignup() : initLogin(); return; }
     if (!$(".sidebar") || !shell()) return;
+    try { await loadPlan(); } catch (e) { if (e.message !== "Please log in again.") alert(e.message); return; }
+    periodLabel();
     if ($(".budgets")) initDashboard();
     else if ($(".expense-table")) initTracker();
     else if ($(".chart-card")) initAnalytics();
