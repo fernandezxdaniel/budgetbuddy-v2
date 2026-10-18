@@ -1,94 +1,162 @@
-"""recommendations.py - student-friendly advice built from the calculation result."""
+"""Generate period-aware guidance from the user's 50/30/20 budget and actuals."""
 import math
-from datetime import date
 
 _ORDER = {"danger": 0, "warning": 1, "info": 2, "good": 3}
 
 
-def peso(x):
-    return f"\u20b1{x:,.2f}"
+def peso(amount):
+    return f"\u20b1{amount:,.2f}"
 
 
-def _r(level, title, message):
+def _recommendation(level, title, message):
     return {"level": level, "title": title, "message": message}
 
 
-def generate(r):
-    inc, cats, m, per = r["income"], r["categories"], r["metrics"], r["period"]
-    if inc <= 0:
-        return [_r("info", "Set your monthly income first",
-                   "Click the Income card on the dashboard and enter your allowance or earnings. "
-                   "BudgetBuddy uses the 50/30/20 rule: 50% needs, 30% wants, 20% savings.")]
-    if r["items_count"] == 0:
-        return [_r("info", "Start logging your spending",
-                   f"With {peso(inc)} a month, your plan is {peso(cats['needs']['budget'])} for needs, "
-                   f"{peso(cats['wants']['budget'])} for wants and {peso(cats['savings']['budget'])} for savings. "
-                   "Add every expense when you spend it so the numbers stay accurate.")]
+def generate(result):
+    income = result["income"]
+    categories = result["categories"]
+    metrics = result["metrics"]
+    period = result["period"]
+    period_name = f"this {period['days']}-day period" if period["set"] else "this period"
 
-    out, n, w, s = [], cats["needs"], cats["wants"], cats["savings"]
-    spend_left = m["spending_left"]
+    if income <= 0:
+        return [_recommendation(
+            "info",
+            "Set income for this period",
+            "Enter the income available for these dates. BudgetBuddy uses the 50/30/20 rule "
+            "to set maximum targets for needs, wants, and savings.",
+        )]
+    if result["items_count"] == 0:
+        return [_recommendation(
+            "info",
+            "Plan your 50/30/20 targets",
+            f"For {period_name}, your targets are {peso(categories['needs']['limit'])} for needs (50%), "
+            f"{peso(categories['wants']['limit'])} for wants (30%), and "
+            f"{peso(categories['savings']['limit'])} for savings (20%). Add category items "
+            "and record actual amounts to track this period.",
+        )]
 
-    if r["totals"]["balance"] < 0:
-        out.append(_r("danger", "You are spending more than you receive",
-                      f"You are {peso(-r['totals']['balance'])} over your income. Stop non-essential "
-                      "purchases now, and talk to family or look for extra income (tutoring, freelance, "
-                      "part-time) before borrowing."))
-    if n["left"] < 0:
-        out.append(_r("warning", "Needs are over your 50% plan",
-                      f"You spent {peso(-n['left'])} more than your {peso(n['budget'])} needs budget. "
-                      "Trim food and transport first: cook or meal-prep, buy from public markets, share "
-                      "bills with roommates, and pause unused subscriptions. If needs stay above 50%, "
-                      "cut wants before touching savings."))
-    if w["left"] < 0:
-        out.append(_r("warning", "Wants are over your 30% plan",
-                      f"You are {peso(-w['left'])} over your {peso(w['budget'])} wants budget. Try a "
-                      "24-hour rule before buying, use student discounts, and choose free campus or "
-                      "community activities for the rest of the month."))
-    elif w["budget"] > 0 and w["percent_used"] >= 80:
-        out.append(_r("info", "Wants are almost used up",
-                      f"You used {w['percent_used']}% of your wants budget and only {peso(w['left'])} is left."))
+    needs, wants, savings = (
+        categories["needs"],
+        categories["wants"],
+        categories["savings"],
+    )
+    spending_left = metrics["spending_left"]
+    recommendations = []
 
-    if s["actual"] == 0:
-        out.append(_r("warning", "You have not saved anything yet",
-                      f"Pay yourself first: move even \u20b150 a day into savings as soon as your allowance "
-                      f"arrives. Your goal this month is {peso(s['budget'])}."))
-    elif s["left"] > 0:
-        if per["days_left"] > 0:
-            per_day = math.ceil(s["left"] / per["days_left"])
-            tip = f"Setting aside about {peso(per_day)} a day for the remaining {per['days_left']} days reaches it."
+    if result["totals"]["balance"] < 0:
+        recommendations.append(_recommendation(
+            "danger",
+            "Spending is above this period's income",
+            f"Recorded spending and savings exceed income by {peso(-result['totals']['balance'])}. "
+            "Pause non-essential purchases and review the entries before changing your plan.",
+        ))
+    if needs["actual"] > needs["limit"]:
+        recommendations.append(_recommendation(
+            "warning",
+            "Needs exceeded the 50% target",
+            f"Needs spending is {peso(needs['actual'] - needs['limit'])} above the "
+            f"{peso(needs['limit'])} 50% target for this period. Review essential costs "
+            "and check that every entry is accurate.",
+        ))
+    elif needs["left"] < 0:
+        recommendations.append(_recommendation(
+            "info",
+            "Needs exceeded the planned budget",
+            f"Needs are {peso(-needs['left'])} above the selected {peso(needs['budget'])} "
+            f"budget, but remain within the 50% income target of {peso(needs['limit'])}.",
+        ))
+    if wants["actual"] > wants["limit"]:
+        recommendations.append(_recommendation(
+            "warning",
+            "Wants exceeded the 30% target",
+            f"Wants spending is {peso(wants['actual'] - wants['limit'])} above the "
+            f"{peso(wants['limit'])} 30% target for this period. Reduce optional purchases "
+            "and check that every entry is accurate.",
+        ))
+    elif wants["left"] < 0:
+        recommendations.append(_recommendation(
+            "info",
+            "Wants exceeded the planned budget",
+            f"Wants are {peso(-wants['left'])} above the selected {peso(wants['budget'])} "
+            f"budget, but remain within the 30% income target of {peso(wants['limit'])}.",
+        ))
+    elif wants["budget"] > 0 and wants["percent_used"] >= 80:
+        recommendations.append(_recommendation(
+            "info",
+            "Wants budget is nearly used",
+            f"You have used {wants['percent_used']}% of the wants budget, with "
+            f"{peso(wants['left'])} remaining for {period_name}.",
+        ))
+
+    if not savings["entered"]:
+        recommendations.append(_recommendation(
+            "warning",
+            "Savings have not been recorded",
+            f"Record any amount saved during {period_name}. The 20% savings target is "
+            f"{peso(savings['limit'])}; you can budget up to this amount for savings.",
+        ))
+    elif savings["actual"] < savings["limit"]:
+        remaining_savings_target = savings["limit"] - savings["actual"]
+        if period["days_left"] > 0:
+            daily_target = remaining_savings_target / period["days_left"]
+            tip = (
+                f"Meeting the remaining {peso(remaining_savings_target)} 20% target would require about "
+                f"{peso(daily_target)} per remaining day."
+            )
         else:
-            tip = "The month is ending, so carry the gap into next month's plan."
-        out.append(_r("info", "Savings goal is not reached yet",
-                      f"You still need {peso(s['left'])} to hit your {peso(s['budget'])} target. {tip}"))
+            tip = f"The period ended {peso(remaining_savings_target)} short of its 20% savings target."
+        recommendations.append(_recommendation(
+            "info",
+            "Savings are below the 20% target",
+            f"You recorded {peso(savings['actual'])} in savings against the "
+            f"{peso(savings['limit'])} 20% target for {period_name}. {tip}",
+        ))
     else:
-        out.append(_r("good", "Savings goal reached",
-                      f"You saved {peso(s['actual'])}, meeting your {peso(s['budget'])} target. Keep it in "
-                      f"a separate account. An emergency fund of about {peso(n['budget'] * 3)} "
-                      "(3 months of needs) is a great next target."))
+        recommendations.append(_recommendation(
+            "good",
+            "20% savings target reached",
+            f"You recorded {peso(savings['actual'])} in savings, meeting or exceeding "
+            f"the {peso(savings['limit'])} target for {period_name}.",
+        ))
 
-    if m["projected_spending"] > m["spending_budget"] and spend_left >= 0:
-        msg = (f"At your current pace you will spend about {peso(m['projected_spending'])} this month, "
-               f"above your {peso(m['spending_budget'])} limit for needs and wants.")
-        if m["daily_allowance"] > 0:
-            msg += f" Keep each remaining day under {peso(m['daily_allowance'])} to stay on plan."
-        out.append(_r("warning", "You are on pace to overspend", msg))
+    if period["active"] and period["days_left"] > 0 and period["elapsed"] > 0:
+        if metrics["projected_spending"] > metrics["spending_budget"] and spending_left >= 0:
+            message = (
+                f"At the current pace, needs and wants could reach about "
+                f"{peso(metrics['projected_spending'])}, above the combined "
+                f"{peso(metrics['spending_budget'])} budget. About "
+                f"{peso(metrics['daily_allowance'])} per remaining day would keep recorded "
+                "spending within the budget."
+            )
+            recommendations.append(_recommendation(
+                "warning", "Spending is on pace to exceed its budget", message
+            ))
 
-    spent = m["spent_total"]
-    if m["peak_day"] and spent > 0 and date.fromisoformat(per["today"]).day >= 5 and m["peak_amount"] / spent >= 0.4:
-        out.append(_r("info", f"One day drove your spending (day {m['peak_day']})",
-                      f"{peso(m['peak_amount'])} was {round(m['peak_amount'] / spent * 100)}% of everything "
-                      "you spent. Plan big purchases ahead and spread them across the month."))
+    if period["elapsed"] >= 3 and metrics["spent_total"] > 0:
+        share = metrics["peak_amount"] / metrics["spent_total"]
+        if share >= 0.4:
+            recommendations.append(_recommendation(
+                "info",
+                "One day accounts for much of your spending",
+                f"{peso(metrics['peak_amount'])} on {metrics['peak_day']} accounts for "
+                f"{round(share * 100)}% of recorded needs and wants in this period. "
+                "Check that the entry is accurate and plan for similar costs.",
+            ))
 
-    big = r.get("largest_expense")
-    if big and big["amount"] >= 0.3 * inc:
-        out.append(_r("info", "Your biggest expense",
-                      f"\"{big['name']}\" ({peso(big['amount'])}) is {round(big['amount'] / inc * 100)}% of "
-                      "your income. Check if there is a cheaper option."))
+    if (
+        not any(item["level"] in ("danger", "warning") for item in recommendations)
+        and needs["actual"] <= needs["budget"]
+        and wants["actual"] <= wants["budget"]
+        and savings["actual"] >= savings["limit"]
+    ):
+        recommendations.append(_recommendation(
+            "good",
+            "Your recorded spending is within plan",
+            f"Needs and wants are within their 50% and 30% targets, and savings meet "
+            f"the 20% target. {peso(max(spending_left, 0))} of the combined spending "
+            "budget remains.",
+        ))
 
-    if not any(x["level"] in ("danger", "warning") for x in out):
-        out.append(_r("good", "You are on track",
-                      f"Needs and wants are within plan and you still have {peso(max(spend_left, 0))} of "
-                      "spending room. Any leftover at month end is best moved to savings."))
-
-    out.sort(key=lambda x: _ORDER[x["level"]])   # stable: danger first, good last
-    return out[:6]
+    recommendations.sort(key=lambda item: _ORDER[item["level"]])
+    return recommendations[:6]

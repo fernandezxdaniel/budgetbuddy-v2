@@ -51,11 +51,32 @@
     return data;
   }
  
-  /* ---------- the plan lives on the server (database); this is the latest copy ---------- */
+  /* ---------- the selected period's plan lives on the server ---------- */
   let plan = null, result = null, chain = Promise.resolve();
+  function selectedPeriod() {
+    try {
+      const saved = JSON.parse(localStorage.getItem("bb_period"));
+      return saved && saved.email === user()?.email && saved.start && saved.end ? saved : null;
+    } catch { return null; }
+  }
   async function loadPlan() {
-    const r = await api("GET", "/api/plan?today=" + todayISO());
+    const selected = selectedPeriod();
+    const query = new URLSearchParams({ today: todayISO() });
+    if (selected) { query.set("start", selected.start); query.set("end", selected.end); }
+    const r = await api("GET", "/api/plan?" + query);
     plan = r.plan; result = r.result;
+  }
+  async function loadPeriod(start, end) {
+    try {
+      const query = new URLSearchParams({ start, end, today: todayISO() });
+      const r = await api("GET", "/api/plan?" + query);
+      plan = r.plan; result = r.result;
+      localStorage.setItem("bb_period", JSON.stringify({ email: user().email, start, end }));
+      return true;
+    } catch (e) {
+      alert(e.message);
+      return false;
+    }
   }
   // Saves one change. The server (Python) checks the rules (50/30/20 limits...) and returns true/false.
   function savePlan(next) {
@@ -85,6 +106,8 @@
       .bb-addspecific:hover{background:#101f2c}
       .bb-income-btn{position:absolute;top:20px;right:22px;padding:8px 14px;border-radius:12px;border:1px solid #274258;background:#101f2c;color:#40c0e7;font:inherit;font-size:13px;cursor:pointer}
       .bb-income-btn:hover{filter:brightness(1.3)}
+      .bb-reset-period{padding:8px 12px;border:1px solid #b42318;border-radius:10px;background:#fff;color:#b42318;font:inherit;font-size:12px;cursor:pointer}
+      .bb-reset-period:hover{background:#fff1f0}
       .bb-dialog{border:0;border-radius:18px;padding:24px;width:min(92vw,400px);font-family:Poppins,Arial,sans-serif}
       .bb-dialog::backdrop{background:rgba(0,0,0,.45)}
       .bb-dialog h3{margin:0 0 10px;text-transform:capitalize}
@@ -112,7 +135,7 @@
       .calendar-grid span.today{box-shadow:inset 0 0 0 2px #112d60}
       .bb-item-row th{padding:12px 12px 12px 44px!important;font-size:15px!important;color:#d9dfea}
       .bb-item-row td{padding:12px!important;font-size:15px!important}
-      .bb-cell{width:100%;padding:6px 8px;border:1px solid #274258;border-radius:8px;background:#101f2c;color:#fff;font:inherit;font-size:14px;text-align:right}
+      .bb-cell{width:100%;padding:6px 8px;border:1px solid #274258;border-radius:8px;background:#101f2c;color:#fff;font:inherit;font-size:14px;text-align:left}
       .bb-cell:focus{outline:2px solid #40c0e7}
       .bb-reco{margin-top:28px}
       .bb-reco h2{margin:0 0 6px;font-size:22px}
@@ -184,10 +207,19 @@
   }
   function periodLabel() {
     const l = $(".month-label");
-    if (l && plan.start && plan.end) l.textContent = fmtRange(plan.start, plan.end);
+    if (l) {
+      if (!plan.start || !plan.end) l.textContent = "Choose a budget period";
+      else {
+        const status = plan.end < todayISO() ? " \u00b7 Past period"
+          : plan.start > todayISO() ? " \u00b7 Upcoming period" : "";
+        l.textContent = fmtRange(plan.start, plan.end) + status;
+      }
+    }
+    const reset = $(".bb-reset-period");
+    if (reset) reset.hidden = !plan.start || !plan.end || (!plan.income && !plan.items.length);
   }
- 
-  // Calendar: month arrows + pick a START and an END date. editable=false only shows the saved range.
+
+  // Select a date range; changing it loads that period without modifying another period's data.
   function initCalendar(editable, onPick) {
     const box = $(".calendar"); if (!box) return () => {};
     const grid = $(".calendar-grid", box), h2 = $(".calendar-heading h2", box), badge = $(".calendar-badge", box);
@@ -238,8 +270,15 @@
     const h = document.createElement("h2"); h.textContent = "Recommendations for you"; box.append(h);
     if (res.period.set && res.entered_any) {
       const st = document.createElement("p"); st.className = "bb-stats";
-      st.textContent = `Daily average ${peso(m.daily_average)} \u00b7 Last 7 days ${peso(m.last_7_days)} \u00b7 ` +
-        `Projected spending by ${fmtDay(res.period.end)} ${peso(m.projected_spending)} \u00b7 Safe daily allowance ${peso(m.daily_allowance)}`;
+      if (res.period.start > res.period.today) {
+        st.textContent = "This period has not started; actuals will be included when its dates begin.";
+      } else {
+        st.textContent = `Daily average in period ${peso(m.daily_average)} \u00b7 Last 7 period days ${peso(m.last_7_days)}`;
+        if (res.period.active && res.period.days_left > 0 && res.period.elapsed > 0) {
+          st.textContent += ` \u00b7 Projected spending ${peso(m.projected_spending)} \u00b7 ` +
+            `Daily spending room ${peso(m.daily_allowance)}`;
+        }
+      }
       box.append(st);
     }
     res.recommendations.forEach(r => {
@@ -294,8 +333,8 @@
       });
   }
   function askIncome(current) {
-    return dialog(`<form method="dialog"><h3>Monthly income</h3>
-      <label>Allowance or earnings (\u20b1)
+    return dialog(`<form method="dialog"><h3>Income for this period</h3>
+      <label>Income available during the selected dates (\u20b1)
         <input name="income" type="number" min="0.01" max="1000000000" step="0.01" value="${current > 0 ? current : ""}" required></label>
       ${ROW}</form>`, f => Number(f.get("income")));
   }
@@ -309,7 +348,8 @@
     const incBtn = document.createElement("button");
     incBtn.type = "button"; incBtn.className = "bb-income-btn"; incCard.appendChild(incBtn);
  
-    const redrawCal = initCalendar(true, async (a, b) => { if (await savePlan({ ...plan, start: a, end: b })) render(); });
+    const redrawCal = initCalendar(true, async (a, b) => { if (await loadPeriod(a, b)) render(); });
+    addPeriodReset(async () => { if (await resetPeriod()) render(); });
  
     function render() {
       incAmt.textContent = peso(plan.income, 2, " ");
@@ -339,19 +379,23 @@
     }
  
     async function setIncome() {
+      if (!plan.start || !plan.end) {
+        alert("Choose a budget period on the calendar before entering its income.");
+        return;
+      }
       const v = await askIncome(plan.income);
       if (v !== null && await savePlan({ ...plan, income: v })) render();
     }
     incBtn.addEventListener("click", setIncome);
  
     async function addTo(cat, startOther) {
+      if (!plan.start || !plan.end)
+        return alert("Please pick this budget period on the calendar first: click a start date, then an end date.");
       if (plan.income <= 0) {
-        alert("Please set your monthly income first.");
+        alert("Please set the income available for this period first.");
         await setIncome();
         if (plan.income <= 0) return;
       }
-      if (!plan.start || !plan.end)
-        return alert("Please pick your budget dates on the calendar first: click a start date, then an end date.");
       const c = result.categories[cat], remaining = r2(c.limit - c.budget);
       if (remaining < 0.01)
         return alert(`${cap(cat)} is fully budgeted (limit ${peso(c.limit, 2)}). Lower another ${cat} item first.`);
@@ -376,8 +420,8 @@
     });
  
     $(".submit-button").addEventListener("click", () => {
-      if (plan.income <= 0) return alert("Set your income first (press Set income).");
       if (!plan.start || !plan.end) return alert("Pick your budget dates on the calendar first.");
+      if (plan.income <= 0) return alert("Set the income for this period first.");
       if (!plan.items.length) return alert("Add at least one item first.");
       location.href = "dashboard2.html";
     });
@@ -392,7 +436,8 @@
   }
  
   function initTracker() {
-    initCalendar(false);
+    const redrawCal = initCalendar(true, async (a, b) => { if (await loadPeriod(a, b)) render(); });
+    addPeriodReset(async () => { if (await resetPeriod()) render(); });
     const GREEN = "#6ce9a6", RED = "#f97066", money = n => peso(n, 2);
     const catRows = $$(".expense-table tbody tr");
     const baseDesc = catRows.map(r => $(".category-description", r).textContent.trim());
@@ -422,7 +467,9 @@
     }
     async function editActual(it, v) {          // each change is stored as a dated entry (feeds the segment tree)
       if (!it.entered || v !== it.actual) {
-        const entry = { date: todayISO(), amount: r2(v - it.actual) };
+        const currentDay = todayISO();
+        const entryDay = currentDay < plan.start ? plan.start : currentDay > plan.end ? plan.end : currentDay;
+        const entry = { date: entryDay, amount: r2(v - it.actual) };
         await savePlan({ ...plan, items: plan.items.map(i => i.id === it.id ? { ...i, log: addLog(i.log, entry) } : i) });
       }
       render();
@@ -454,8 +501,9 @@
       if (a[0]) a[0].textContent = peso(res.income, 2, " ");
       if (a[1]) a[1].textContent = peso(t.balance, 2, " ");
       const note = $("#table-note");
-      if (note) note.textContent = `Click a Budget or Actual box to change it. Budgets cannot go over ${money(res.categories.needs.limit)} (50%) for needs, ` +
-        `${money(res.categories.wants.limit)} (30%) for wants and ${money(res.categories.savings.limit)} (20%) for savings. Left appears after you enter an Actual.`;
+      if (note) note.textContent = `Click a Budget or Actual box to change this period. Limits are ${money(res.categories.needs.limit)} (50%) for needs, ` +
+        `${money(res.categories.wants.limit)} (30%) for wants and ${money(res.categories.savings.limit)} (20%) for savings, based on this period's income. Left appears after you enter an Actual.`;
+      periodLabel(); redrawCal();
       renderReco(res, $(".tracker"));
     }
     render();
@@ -463,36 +511,69 @@
  
   /* ---------- Analytics page ---------- */
   function initAnalytics() {
-    const res = result, C = res.categories;
-    const maxV = Math.max(1, ...CATS.flatMap(c => [C[c].budget, C[c].actual]));
-    const mag = Math.pow(10, Math.floor(Math.log10(maxV)));
-    const top = Math.ceil(maxV * 1.1 / mag) * mag;
-    $$(".tick").forEach((t, i) => { t.textContent = peso(top * (1 - i / 4)); });
-    $$(".bar-pair").forEach((pair, i) => {
-      const v = C[CATS[i]];
-      [["budget", v.budget], ["actual", v.actual]].forEach(([k, val]) => {
-        const bar = $(".bar." + k, pair);
-        bar.style.setProperty("--height", (val / top * 100) + "%");
-        $(".bar-value", bar).textContent = peso(val);
+    const redrawCal = initCalendar(true, async (a, b) => { if (await loadPeriod(a, b)) render(); });
+    addPeriodReset(async () => { if (await resetPeriod()) render(); });
+    function render() {
+      const res = result, C = res.categories;
+      const maxV = Math.max(1, ...CATS.flatMap(c => [C[c].budget, C[c].actual]));
+      const mag = Math.pow(10, Math.floor(Math.log10(maxV)));
+      const top = Math.ceil(maxV * 1.1 / mag) * mag;
+      $$(".tick").forEach((t, i) => { t.textContent = peso(top * (1 - i / 4)); });
+      $$(".bar-pair").forEach((pair, i) => {
+        const v = C[CATS[i]];
+        [["budget", v.budget], ["actual", v.actual]].forEach(([k, val]) => {
+          const bar = $(".bar." + k, pair);
+          bar.style.setProperty("--height", (val / top * 100) + "%");
+          $(".bar-value", bar).textContent = peso(val);
+        });
       });
-    });
-    $(".plot").setAttribute("aria-label", CATS.map(c => `${c}: budget ${C[c].budget} pesos, actual ${C[c].actual} pesos.`).join(" "));
-    $$(".insight").forEach((box, i) => {
-      const c = CATS[i], v = C[c], p = $("p", box), s = $("small", box);
-      let cls = "", text;
-      if (!v.entered) text = "No actual entered yet";
-      else if (c === "savings") {
-        const diff = r2(v.actual - v.budget);
-        text = diff === 0 ? "Target reached" : diff > 0 ? `${peso(diff)} above target` : `${peso(-diff)} short of target`;
-        cls = diff >= 0 ? "positive" : "warning";
-      } else {
-        text = v.left === 0 ? "Exactly on budget" : v.left > 0 ? `${peso(v.left)} below budget` : `${peso(-v.left)} over budget`;
-        cls = v.left >= 0 ? "positive" : "warning";
-      }
-      p.textContent = text; p.className = cls;
-      s.textContent = c === "savings" ? `Target ${peso(v.budget)} \u00b7 Saved ${peso(v.actual)}` : `Budget ${peso(v.budget)} \u00b7 Actual ${peso(v.actual)}`;
-    });
-    renderReco(res, $(".insights"));
+      $(".plot").setAttribute("aria-label", CATS.map(c => `${c}: budget ${C[c].budget} pesos, actual ${C[c].actual} pesos.`).join(" "));
+      $$(".insight").forEach((box, i) => {
+        const c = CATS[i], v = C[c], p = $("p", box), s = $("small", box);
+        let cls = "", text;
+        if (!v.entered) text = "No actual entered yet";
+        else if (c === "savings") {
+          const diff = r2(v.actual - v.budget);
+          text = diff === 0 ? "Target reached" : diff > 0 ? `${peso(diff)} above target` : `${peso(-diff)} short of target`;
+          cls = diff >= 0 ? "positive" : "warning";
+        } else {
+          text = v.left === 0 ? "Exactly on budget" : v.left > 0 ? `${peso(v.left)} below budget` : `${peso(-v.left)} over budget`;
+          cls = v.left >= 0 ? "positive" : "warning";
+        }
+        p.textContent = text; p.className = cls;
+        s.textContent = c === "savings" ? `Target ${peso(v.budget)} \u00b7 Saved ${peso(v.actual)}` : `Budget ${peso(v.budget)} \u00b7 Actual ${peso(v.actual)}`;
+      });
+      periodLabel(); redrawCal();
+      renderReco(res, $(".insights"));
+    }
+    render();
+  }
+
+  function addPeriodReset(onReset) {
+    const header = $(".page-header"), label = $(".month-label");
+    if (!header || !label) return;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "bb-reset-period";
+    button.textContent = "Reset this period";
+    button.hidden = !plan.start || !plan.end || (!plan.income && !plan.items.length);
+    button.addEventListener("click", onReset);
+    label.insertAdjacentElement("afterend", button);
+  }
+
+  async function resetPeriod() {
+    if (!plan.start || !plan.end) return false;
+    if (!confirm(`This will permanently clear income, budgets, and entries for ${fmtRange(plan.start, plan.end)}. Other periods will not be affected.`))
+      return false;
+    try {
+      const query = new URLSearchParams({ start: plan.start, end: plan.end });
+      const r = await api("DELETE", "/api/plan?" + query);
+      plan = r.plan; result = r.result;
+      return true;
+    } catch (e) {
+      alert(e.message);
+      return false;
+    }
   }
  
   /* ---------- start ---------- */

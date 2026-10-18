@@ -106,8 +106,6 @@ def validate_plan(plan):
             if d is None:
                 raise BudgetError("Each entry needs a date.")
             amt = to_centavos(e.get("amount", 0), f'Actual for "{name}"', signed=True)
-            if start:
-                d = min(max(d, start), end)      # keep every entry inside the chosen period
             log.append((d, amt))
             total += amt
         if total < 0:
@@ -117,7 +115,7 @@ def validate_plan(plan):
     # The 50/30/20 rule: the budgets of a category may never exceed its limit.
     budgets = {c: sum(i["budget"] for i in items if i["category"] == c) for c in CATEGORIES}
     if income == 0 and any(budgets.values()):
-        raise BudgetError("Set your monthly income first.")
+        raise BudgetError("Set income for this period first.")
     lim = limits(income)
     for c in CATEGORIES:
         if budgets[c] > lim[c]:
@@ -157,8 +155,12 @@ def calculate(norm, today=None):
  
     for it in norm["items"]:
         cat, actual = it["category"], 0
+        has_entry = False
         for d, amt in it["log"]:
-            idx = (min(max(d, start), end) - start).days
+            if not start <= d <= end:
+                continue
+            has_entry = True
+            idx = (d - start).days
             sums[cat].add(idx, amt)                           # segment-tree point update
             actual += amt
             if cat != "savings":
@@ -166,7 +168,6 @@ def calculate(norm, today=None):
                 day_spend[idx] += amt
                 peak.update(idx, day_spend[idx])
         budget[cat] += it["budget"]
-        has_entry = bool(it["log"])
         entered[cat] = entered[cat] or has_entry
         rows[cat].append({"id": it["uid"], "name": it["name"], "budget": P(it["budget"]), "actual": P(actual),
                           "left": P(it["budget"] - actual), "entered": has_entry})
@@ -197,7 +198,8 @@ def calculate(norm, today=None):
     result = {
         "ok": True,
         "period": {"set": period_set, "start": start.isoformat(), "end": end.isoformat(), "days": days,
-                   "today": today.isoformat(), "elapsed": elapsed, "days_left": days_left},
+                   "today": today.isoformat(), "elapsed": elapsed, "days_left": days_left,
+                   "active": period_set and start <= today <= end},
         "income": P(income),
         "categories": {
             c: {"ratio": RATIOS[c], "limit": P(lim[c]), "budget": P(budget[c]), "actual": P(actual_c[c]),

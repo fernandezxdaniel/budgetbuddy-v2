@@ -1,8 +1,15 @@
 # Budget Buddy
 
 Budget Buddy is a Flask application that serves its frontend and stores each
-account's budget plan in SQLite for local development or PostgreSQL in
-production.
+account's independent budget periods in SQLite for local development or
+PostgreSQL in production. Each exact start/end date range has its own income,
+50/30/20 budgets, and actual entries; selecting another period does not replace
+or clear the existing one.
+
+Choose a start date and end date on the calendar to open a period. Choosing the
+same two dates later reopens that period; a new date range starts empty. Income
+and 50/30/20 targets are calculated for the selected period. **Reset this
+period** clears only that range, after confirmation.
 
 ## Run locally
 
@@ -38,7 +45,9 @@ For an existing Render service instead of a Blueprint, set its root directory to
 to `gunicorn app:app`. Add `DATABASE_URL` from the PostgreSQL service and a
 stable, private `SECRET_KEY` environment variable. Do not commit either secret.
 
-The application creates its PostgreSQL tables at startup. User accounts and
-plans are isolated by the authenticated account ID; an existing SQLite database
-is not automatically copied to PostgreSQL, so users must create accounts again
-after switching databases.
+The application creates and upgrades its PostgreSQL tables at startup. Existing
+single-plan data in a database is copied into its matching period the first
+time the new schema starts; other periods are kept separately. User accounts
+and periods are isolated by the authenticated account ID. An existing SQLite
+database is not automatically copied to PostgreSQL, so users must create
+accounts again after switching databases.

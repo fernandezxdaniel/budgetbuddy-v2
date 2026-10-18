@@ -69,6 +69,19 @@ def create_app(database_url=None):
         except (TypeError, ValueError):
             raise BudgetError("Today must be a date (YYYY-MM-DD).")
 
+    def request_period(start_value, end_value):
+        if start_value in (None, "") and end_value in (None, ""):
+            return None, None
+        if start_value in (None, "") or end_value in (None, ""):
+            raise BudgetError("Please pick both a start date and an end date.")
+        try:
+            start = date.fromisoformat(start_value)
+            end = date.fromisoformat(end_value)
+        except (TypeError, ValueError):
+            raise BudgetError("Period dates must use YYYY-MM-DD format.")
+        validate_plan({"income": 0, "start": start.isoformat(), "end": end.isoformat(), "items": []})
+        return start, end
+
     @app.post("/api/signup")
     def signup():
         data = request.get_json(silent=True)
@@ -116,9 +129,12 @@ def create_app(database_url=None):
             return fail("Please log in again.", 401)
         try:
             today = request_today(request.args.get("today"))
+            start, end = request_period(request.args.get("start"), request.args.get("end"))
         except BudgetError as error:
             return fail(str(error))
-        normalized = database.load_plan(user["id"])
+        normalized = database.load_plan(
+            user["id"], start, end, latest=start is None and end is None
+        )
         return jsonify(ok=True, plan=plan_to_json(normalized), result=calculate(normalized, today))
 
     @app.put("/api/plan")
@@ -139,6 +155,26 @@ def create_app(database_url=None):
             ok=True,
             plan=plan_to_json(normalized),
             result=calculate(normalized, today),
+        )
+
+    @app.delete("/api/plan")
+    def delete_plan():
+        user = require_user()
+        if not user:
+            return fail("Please log in again.", 401)
+        try:
+            start, end = request_period(request.args.get("start"), request.args.get("end"))
+        except BudgetError as error:
+            return fail(str(error))
+        if start is None:
+            return fail("Choose a dated period before resetting it.")
+        deleted = database.delete_period(user["id"], start, end)
+        normalized = database.load_plan(user["id"], start, end)
+        return jsonify(
+            ok=True,
+            deleted=deleted,
+            plan=plan_to_json(normalized),
+            result=calculate(normalized),
         )
 
     @app.get("/api/health")

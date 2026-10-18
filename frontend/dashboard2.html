@@ -369,23 +369,23 @@
 
 
     .category-column {
-      width: 43%;
+      width: 37%;
     }
 
 
     .amount-column {
-      width: 19%;
+      width: 21%;
     }
 
 
     .expense-table th,
     .expense-table td {
-      padding: 24px;
+      padding: 18px 16px;
     }
 
 
     .expense-table thead {
-      background: var(--card-header);
+      background: #112d60;
     }
 
 
@@ -401,13 +401,17 @@
 
 
     .expense-table .number {
-      text-align: right;
+      text-align: left;
       font-variant-numeric: tabular-nums;
     }
 
 
     .expense-table tbody tr {
       border-bottom: 1px solid var(--line);
+    }
+
+    .expense-table tbody tr:hover {
+      background: #111824;
     }
 
 
@@ -642,7 +646,7 @@
 
       <section
         class="summary"
-        aria-label="Account summary and calendar"
+        aria-label="Period summary and calendar"
       >
         <article class="summary-card">
           <div class="summary-icon">
@@ -653,7 +657,7 @@
           </div>
 
 
-          <h2>Income</h2>
+          <h2>Period income</h2>
           <p class="amount">₱ 0.00</p>
         </article>
 
@@ -674,11 +678,11 @@
 
         <section
           class="calendar"
-          aria-label="Budget period calendar preview"
+          aria-label="Select a budget period"
         >
           <div class="calendar-heading">
-            <h2>Budget period</h2>
-            <span class="calendar-badge">Selected: Oct 3</span>
+            <h2>Select period</h2>
+            <span class="calendar-badge">Choose a start date</span>
           </div>
 
 
@@ -863,4 +867,3 @@
   <script src="budgetbuddy.js"></script>
 </body>
 </html>
-

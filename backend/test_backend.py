@@ -60,12 +60,29 @@ assert len(r["weekly"]) == 5 and sum(w["spent"] for w in r["weekly"]) == 6000
 assert any("on pace" in x["title"] for x in r["recommendations"])
 before = calculate(norm, date(2026, 10, 1))["period"]; assert before["elapsed"] == 0
 after = calculate(norm, date(2026, 12, 1))["period"];  assert (after["elapsed"], after["days_left"]) == (32, 0)
-assert validate_plan(mk(items=[it("needs", "Rent", 100, [("2026-09-01", 50)])]))["items"][0]["log"][0][0] == date(2026, 10, 10)
+assert r["period"]["active"] is True
+for days in (1, 2, 3, 90, 366):
+    end_day = date(2026, 1, 1).toordinal() + days - 1
+    end_date = date.fromordinal(end_day).isoformat()
+    period_result = calculate(validate_plan(mk(start="2026-01-01", end=end_date)), date(2026, 1, 2))
+    assert period_result["period"]["days"] == days
+    assert period_result["categories"]["needs"]["limit"] == 5000
+    assert all(isinstance(rec["message"], str) for rec in period_result["recommendations"])
+outside_log = validate_plan(mk(items=[it("needs", "Rent", 100, [("2026-09-01", 50)])]))
+assert outside_log["items"][0]["log"][0][0] == date(2026, 9, 1)
+assert calculate(outside_log, date(2026, 10, 16))["categories"]["needs"]["actual"] == 0
+below_rule_limit = validate_plan(mk(items=[it("needs", "Rent", 1000, [("2026-10-10", 1500)])]))
+below_recommendations = calculate(below_rule_limit, date(2026, 10, 16))["recommendations"]
+assert any(x["title"] == "Needs exceeded the planned budget" for x in below_recommendations)
+assert not any(x["title"] == "Needs exceeded the 50% target" for x in below_recommendations)
+above_rule_limit = validate_plan(mk(items=[it("needs", "Rent", 1000, [("2026-10-10", 6000)])]))
+assert any(x["title"] == "Needs exceeded the 50% target"
+           for x in calculate(above_rule_limit, date(2026, 10, 16))["recommendations"])
  
 BAD = [
     (mk(items=[it("needs", "Rent", 5000.01)]), "over its limit"),
     (mk(income=8000, items=ITEMS), "over its limit"),                 # lowering income below existing budgets
-    (mk(income=0, items=[it("needs", "Rent", 1)]), "income first"),
+    (mk(income=0, items=[it("needs", "Rent", 1)]), "income for this period first"),
     (mk(items=[it("needs", "Rent", 100, [("2026-10-10", -1)])]), "negative"),
     (mk(items=[it("needs", "Rent", 100), it("needs", "rent", 50)]), "already"),
     (mk(end=None), "both"), (mk(start="2026-11-10", end="2026-10-10"), "end date"),
@@ -78,7 +95,7 @@ for plan, text in BAD:
     except BudgetError as e:
         assert text in str(e), (text, str(e))
 e = calculate(validate_plan(mk(income=0)), date(2026, 10, 16))
-assert e["recommendations"][0]["title"].startswith("Set your monthly income")
+assert e["recommendations"][0]["title"].startswith("Set income for this period")
 none = calculate(validate_plan({"income": 1000}), date(2026, 10, 16)); assert none["period"]["set"] is False
  
 # ---------------------------------------------------------------- 3. database: saved, reloaded, replaced
@@ -95,6 +112,11 @@ db.save_plan(uid, norm)
 assert Database(url).load_plan(uid) == norm               # a brand-new connection still sees it: it was SAVED
 smaller = validate_plan(mk(items=ITEMS[:2]))
 db.save_plan(uid, smaller); assert db.load_plan(uid) == smaller
+november = validate_plan(mk(income=12000, start="2026-11-01", end="2026-11-30",
+                            items=[it("needs", "Rent", 5000, [("2026-11-10", 1200)])]))
+db.save_plan(uid, november)
+assert db.load_plan(uid, smaller["start"], smaller["end"]) == smaller
+assert db.load_plan(uid, november["start"], november["end"]) == november
  
 # an old database file (first version: no created_at column, one existing account) must keep working
 import sqlite3
@@ -102,9 +124,21 @@ old = os.path.join(tmp, "old.db")
 con = sqlite3.connect(old)
 con.execute("CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL)")
 con.execute("INSERT INTO users (name, email, password_hash) VALUES ('Old', 'old@x.com', 'h')"); con.commit(); con.close()
+con = sqlite3.connect(old)
+con.execute("CREATE TABLE plans (user_id INTEGER PRIMARY KEY, income INTEGER, start_date TEXT, end_date TEXT, updated_at TEXT)")
+con.execute("INSERT INTO plans VALUES (1, 1000000, '2026-10-01', '2026-10-30', '2026-10-01T00:00:00Z')")
+con.execute("CREATE TABLE plan_items (id INTEGER PRIMARY KEY, user_id INTEGER, uid TEXT, category TEXT, name TEXT, budget INTEGER, sort_order INTEGER)")
+con.execute("INSERT INTO plan_items VALUES (1, 1, 'old-rent', 'needs', 'Rent', 400000, 0)")
+con.execute("CREATE TABLE item_log (id INTEGER PRIMARY KEY, item_id INTEGER, day TEXT, amount INTEGER)")
+con.execute("INSERT INTO item_log VALUES (1, 1, '2026-10-10', 120000)")
+con.commit(); con.close()
 dbo = Database("sqlite:///" + old)
 assert dbo.get_user_by_email("old@x.com")["name"] == "Old"
 assert dbo.create_user("New", "new@x.com", "h") > 1
+legacy = dbo.load_plan(1, date(2026, 10, 1), date(2026, 10, 30))
+assert legacy["income"] == 1000000 and legacy["items"][0]["log"] == [(date(2026, 10, 10), 120000)]
+assert dbo.delete_period(1, date(2026, 10, 1), date(2026, 10, 30))
+assert Database("sqlite:///" + old).load_plan(1, date(2026, 10, 1), date(2026, 10, 30))["items"] == []
  
 # ---------------------------------------------------------------- 4. the whole API
 client = create_app("sqlite:///" + os.path.join(tmp, "api.db")).test_client()
@@ -120,10 +154,20 @@ assert client.post("/api/login", json={"email": "j@x.com", "password": "Abcdef1!
 assert client.get("/api/plan").status_code == 401
 assert client.get("/api/plan", headers={"Authorization": "Bearer abc"}).status_code == 401
 g = j(client.get("/api/plan?today=2026-10-16", headers=H))
-assert g["plan"]["items"] == [] and g["result"]["recommendations"][0]["title"].startswith("Set your monthly")
+assert g["plan"]["items"] == [] and g["result"]["recommendations"][0]["title"].startswith("Set income")
 put = client.put("/api/plan", headers=H, json={"plan": mk(items=ITEMS), "today": "2026-10-16"})
 assert put.status_code == 200 and j(put)["result"]["categories"]["needs"]["actual"] == 4500
 assert j(client.get("/api/plan?today=2026-10-16", headers=H))["plan"] == j(put)["plan"]
+november_plan = mk(income=12000, start="2026-11-01", end="2026-11-30",
+                   items=[it("needs", "Rent", 5000, [("2026-11-10", 1200)])])
+nov_put = client.put("/api/plan", headers=H, json={"plan": november_plan, "today": "2026-11-12"})
+assert nov_put.status_code == 200
+oct_get = client.get("/api/plan?start=2026-10-10&end=2026-11-10&today=2026-11-12", headers=H)
+assert j(oct_get)["plan"] == j(put)["plan"]
+nov_get = client.get("/api/plan?start=2026-11-01&end=2026-11-30&today=2026-11-12", headers=H)
+assert j(nov_get)["plan"] == j(nov_put)["plan"]
+assert client.delete("/api/plan?start=2026-11-01&end=2026-11-30", headers=H).status_code == 200
+assert j(client.get("/api/plan?start=2026-10-10&end=2026-11-10&today=2026-11-12", headers=H))["plan"] == j(put)["plan"]
 bad = client.put("/api/plan", headers=H, json={"plan": mk(items=[it("needs", "Rent", 6000)])})
 assert bad.status_code == 400 and "over its limit" in j(bad)["error"]
 assert j(client.get("/api/plan", headers=H))["plan"] == j(put)["plan"], "a rejected save must change nothing"
