@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: budgetbuddy
+    runtime: python
+    plan: free
+    rootDir: backend
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: budgetbuddy-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+
+databases:
+  - name: budgetbuddy-db
+    databaseName: budgetbuddy
+    user: budgetbuddy
+    plan: free
+    region: oregon

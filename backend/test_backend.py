@@ -2,6 +2,8 @@ import os, random, shutil, tempfile
 from datetime import date
  
 os.environ["SECRET_KEY"] = "test-secret"
+TEST_DB_DIR = tempfile.mkdtemp()
+os.environ["DATABASE_URL"] = "sqlite:///" + os.path.join(TEST_DB_DIR, "app.db")
 from segment_tree import SegmentTree, SumSegmentTree, MaxSegmentTree
 from budget_logic import BudgetError, calculate, validate_plan
 from database import Database, DuplicateEmail
@@ -131,6 +133,7 @@ h = j(client.get("/api/health")); assert h["ok"] and h["database"] == "sqlite"
 assert client.get("/").status_code == 200
  
 shutil.rmtree(tmp, ignore_errors=True)
+shutil.rmtree(TEST_DB_DIR, ignore_errors=True)
 print("ALL TESTS PASSED")
 for x in r["recommendations"]:
     print("-", x["level"], "|", x["title"])

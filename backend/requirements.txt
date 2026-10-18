@@ -1,4 +1,4 @@
 Flask>=3.0
 flask-cors>=4.0
 gunicorn>=22.0
-psycopg[binary]>=3.2.10; sys_platform == "linux"
+psycopg[binary]>=3.2.10

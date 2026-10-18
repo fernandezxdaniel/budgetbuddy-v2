@@ -1,5 +1,6 @@
 """recommendations.py - student-friendly advice built from the calculation result."""
 import math
+from datetime import date
 
 _ORDER = {"danger": 0, "warning": 1, "info": 2, "good": 3}
 
@@ -73,7 +74,7 @@ def generate(r):
         out.append(_r("warning", "You are on pace to overspend", msg))
 
     spent = m["spent_total"]
-    if m["peak_day"] and spent > 0 and per["today"] >= 5 and m["peak_amount"] / spent >= 0.4:
+    if m["peak_day"] and spent > 0 and date.fromisoformat(per["today"]).day >= 5 and m["peak_amount"] / spent >= 0.4:
         out.append(_r("info", f"One day drove your spending (day {m['peak_day']})",
                       f"{peso(m['peak_amount'])} was {round(m['peak_amount'] / spent * 100)}% of everything "
                       "you spent. Plan big purchases ahead and spread them across the month."))
