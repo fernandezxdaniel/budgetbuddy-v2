@@ -2,9 +2,10 @@
 
 Budget Buddy is a Flask application that serves its frontend and stores each
 account's independent budget periods in SQLite for local development or
-PostgreSQL in production. Each exact start/end date range has its own income,
-50/30/20 budgets, and actual entries; selecting another period does not replace
-or clear the existing one.
+PostgreSQL in production. Each exact start/end date range has its own
+50/30/20 budgets and actual entries; dated income is included in every range
+that contains its date. Selecting another period does not replace or clear
+existing data.
 
 Choose a start date and end date on the calendar to open a period. Choosing the
 same two dates later reopens that period; a new date range starts empty. Income
@@ -13,10 +14,10 @@ period** clears only that range, after confirmation.
 
 Income is recorded as dated transactions and summed when it falls inside the
 selected range. Analytics uses the segment tree to total daily income and
-needs/wants actuals into 3- or 6-month trends, with monthly averages and a
-selectable month-to-month expense comparison. The current month is a
-month-to-date total; expenses include needs and wants, while savings remain a
-separate 50/30/20 category.
+needs/wants actuals into a fixed six-month cash-flow trend, with monthly
+averages and a selectable month-to-month expense comparison. The current month
+is a month-to-date total; expenses include needs and wants, while savings remain
+a separate 50/30/20 category.
 
 ## Run locally
 

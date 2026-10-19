@@ -190,12 +190,11 @@ oct_get = client.get("/api/plan?start=2026-10-10&end=2026-11-10&today=2026-11-12
 assert j(oct_get)["plan"] == j(put)["plan"]
 nov_get = client.get("/api/plan?start=2026-11-01&end=2026-11-30&today=2026-11-12", headers=H)
 assert j(nov_get)["plan"] == j(nov_put)["plan"]
-trend = j(client.get("/api/analytics?months=3&today=2026-11-12", headers=H))
-assert [m["expenses"] for m in trend["months"]] == [0, 6000, 1200]
-assert [m["income"] for m in trend["months"]] == [0, 10000, 12000]
-assert trend["averages"]["expenses"] == 2400
-assert len(j(client.get("/api/analytics?months=6&today=2026-11-12", headers=H))["months"]) == 6
-assert client.get("/api/analytics?months=5", headers=H).status_code == 400
+trend = j(client.get("/api/analytics?today=2026-11-12", headers=H))
+assert len(trend["months"]) == 6
+assert [m["expenses"] for m in trend["months"][-2:]] == [6000, 1200]
+assert [m["income"] for m in trend["months"][-2:]] == [10000, 12000]
+assert trend["averages"]["expenses"] == 1200
 assert client.delete("/api/plan?start=2026-11-01&end=2026-11-30", headers=H).status_code == 200
 assert j(client.get("/api/plan?start=2026-10-10&end=2026-11-10&today=2026-11-12", headers=H))["plan"] == j(put)["plan"]
 bad_plan = mk(start="2026-10-10", end="2026-11-10", items=[it("needs", "Rent", 6000)])
@@ -208,6 +207,7 @@ assert client.delete("/api/income/" + str(j(oct_income)["id"]),
                      headers={"Authorization": "Bearer " + t2}).status_code == 404
 h = j(client.get("/api/health")); assert h["ok"] and h["database"] == "sqlite"
 assert client.get("/").status_code == 200
+assert client.get("/create-account.html").status_code == 200
  
 shutil.rmtree(tmp, ignore_errors=True)
 shutil.rmtree(TEST_DB_DIR, ignore_errors=True)

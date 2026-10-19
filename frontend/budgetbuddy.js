@@ -47,7 +47,9 @@
     let data = {};
     try { data = await res.json(); } catch { /* not JSON */ }
     if (auth && res.status === 401) { localStorage.removeItem("bb_token"); location.href = "index.html"; throw new Error("Please log in again."); }
-    if (!data.ok) throw new Error(data.error || "Something went wrong.");
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || `The server returned HTTP ${res.status} for ${path}. Please retry; if it continues, check the Render logs.`);
+    }
     return data;
   }
  
@@ -116,6 +118,12 @@
       .bb-addspecific:hover{background:#101f2c}
       .bb-income-btn{position:absolute;top:20px;right:22px;padding:8px 14px;border-radius:12px;border:1px solid #274258;background:#101f2c;color:#40c0e7;font:inherit;font-size:13px;cursor:pointer}
       .bb-income-btn:hover{filter:brightness(1.3)}
+      .bb-income-btn:disabled{opacity:.55;cursor:not-allowed}
+      .income-period-hint{margin:8px 0 0;color:#a8b0be;font-size:11px;line-height:1.5}
+      .bb-logout{margin:14px 0 0;padding:7px 12px;border:1px solid rgba(255,255,255,.35);border-radius:9px;background:transparent;color:#fff;font:inherit;font-size:12px;cursor:pointer}
+      .bb-logout:hover{background:rgba(255,255,255,.1)}
+      .bb-app-error{margin:0 0 20px;padding:14px 16px;border:1px solid #fda29b;border-radius:12px;background:#fff1f0;color:#912018;font-size:13px}
+      .bb-app-error button{margin-left:10px;border:0;background:transparent;color:inherit;font:inherit;font-weight:600;text-decoration:underline;cursor:pointer}
       .bb-reset-period{padding:8px 12px;border:1px solid #b42318;border-radius:10px;background:#fff;color:#b42318;font:inherit;font-size:12px;cursor:pointer}
       .bb-reset-period:hover{background:#fff1f0}
       .brand img{background:#fff;border-radius:12px;padding:3px;object-fit:contain}
@@ -130,13 +138,11 @@
       .bb-trend{margin:24px 0;padding:24px;border:1px solid #dfe3ea;border-radius:20px;background:#fff}
       .bb-trend-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
       .bb-trend-head h2{margin:0;font-size:20px}
-      .bb-trend-controls{display:flex;gap:8px}
-      .bb-trend-controls button{padding:7px 12px;border:1px solid #c5cad1;border-radius:9px;background:#fff;cursor:pointer}
-      .bb-trend-controls button[aria-pressed=true]{background:#112d60;color:#fff}
       .bb-trend-summary{color:#596273;font-size:12px}
       .bb-trend-compare{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px}
       .bb-trend-compare label{display:flex;align-items:center;gap:6px}
       .bb-trend-compare select{padding:6px 8px;border:1px solid #c5cad1;border-radius:8px;background:#fff;font:inherit}
+      .bb-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
       .bb-compare-result{min-height:20px;margin:8px 0;color:#344054;font-size:13px;font-weight:500}
       .bb-trend-chart{display:grid;grid-template-columns:repeat(6,minmax(56px,1fr));gap:12px;align-items:end;min-height:190px;padding:16px 0}
       .bb-trend-month{display:grid;grid-template-rows:140px auto;gap:8px;text-align:center;font-size:11px}
@@ -243,7 +249,30 @@
     if (nm) nm.textContent = u.name;
     if (em) em.textContent = u.email;
     if (av) av.textContent = u.name.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join("");
+    const logout = document.createElement("button");
+    logout.type = "button";
+    logout.className = "bb-logout";
+    logout.textContent = "Sign out";
+    logout.addEventListener("click", () => {
+      localStorage.removeItem("bb_token");
+      localStorage.removeItem("bb_user");
+      localStorage.removeItem("bb_period");
+      location.replace("/");
+    });
+    em?.parentElement.append(logout);
     return true;
+  }
+  function showAppError(message) {
+    const banner = document.createElement("p");
+    banner.className = "bb-app-error";
+    banner.setAttribute("role", "alert");
+    banner.append(document.createTextNode(`Could not load your budget: ${message}`));
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.textContent = "Retry";
+    retry.addEventListener("click", () => location.reload());
+    banner.append(retry);
+    $(".page-header")?.insertAdjacentElement("afterend", banner);
   }
   function periodLabel() {
     const l = $(".month-label");
@@ -392,8 +421,7 @@
     const [incCard, balCard] = $$(".summary-card");
     const incAmt = $(".amount", incCard), balAmt = $(".amount", balCard);
     incCard.style.position = "relative";
-    const incBtn = document.createElement("button");
-    incBtn.type = "button"; incBtn.className = "bb-income-btn"; incCard.appendChild(incBtn);
+    const incBtn = $(".bb-income-btn", incCard);
     const incomeHistory = document.createElement("section");
     incomeHistory.className = "bb-income-history";
     incomeHistory.innerHTML = '<h2>Income received in this period</h2><ul class="bb-income-list"></ul>';
@@ -407,6 +435,8 @@
       balAmt.textContent = peso(result.totals.balance, 2, " ");
       incBtn.textContent = "+ Add income";
       incBtn.disabled = !plan.start || !plan.end;
+      incBtn.title = incBtn.disabled ? "Choose a date range to add income" : "Add a dated income entry";
+      $(".income-period-hint", incCard).hidden = Boolean(plan.start && plan.end);
       periodLabel(); redrawCal();
       const incomeList = $(".bb-income-list", incomeHistory);
       incomeList.replaceChildren(...incomeEntries.map(entry => {
@@ -599,31 +629,23 @@
     trend.className = "bb-trend";
     trend.innerHTML = `
       <div class="bb-trend-head">
-        <h2>Monthly income and expense trend</h2>
-        <div class="bb-trend-controls" aria-label="Trend period">
-          <button type="button" data-months="3" aria-pressed="false">3 months</button>
-          <button type="button" data-months="6" aria-pressed="true">6 months</button>
-        </div>
+        <h2>Monthly cash flow</h2>
       </div>
+      <p class="bb-hint">Each month compares income received with needs and wants spent. The current month is month-to-date; savings are tracked separately below.</p>
       <p class="bb-trend-summary"></p>
       <div class="bb-trend-compare">
-        <label>Compare <select class="bb-compare-from" aria-label="First month to compare"></select></label>
-        <span>with</span>
-        <label><select class="bb-compare-to" aria-label="Second month to compare"></select></label>
+        <span>Compare needs and wants spending:</span>
+        <label><span class="bb-sr-only">First month</span><select class="bb-compare-from" aria-label="First month to compare"></select></label>
+        <span>to</span>
+        <label><span class="bb-sr-only">Second month</span><select class="bb-compare-to" aria-label="Second month to compare"></select></label>
       </div>
       <p class="bb-compare-result" aria-live="polite"></p>
       <div class="bb-trend-chart" role="img" aria-label="Monthly income and expenses"></div>
       <div class="bb-trend-legend"><span>Income</span><span class="expenses">Needs + wants expenses</span></div>`;
     $(".chart-card").insertAdjacentElement("afterend", trend);
-    let trendRequest = 0;
-    async function loadTrend(monthCount) {
-      const requestId = ++trendRequest;
-      $$(".bb-trend-controls button", trend).forEach(button => {
-        button.setAttribute("aria-pressed", String(Number(button.dataset.months) === monthCount));
-      });
+    async function loadTrend() {
       try {
-        const data = await api("GET", "/api/analytics?months=" + monthCount);
-        if (requestId !== trendRequest) return;
+        const data = await api("GET", "/api/analytics");
         const max = Math.max(1, ...data.months.flatMap(month => [month.income, month.expenses]));
         const from = $(".bb-compare-from", trend), to = $(".bb-compare-to", trend);
         const selectedFrom = from.value, selectedTo = to.value;
@@ -654,7 +676,7 @@
         from.onchange = updateComparison; to.onchange = updateComparison;
         updateComparison();
         const chart = $(".bb-trend-chart", trend);
-        chart.style.gridTemplateColumns = `repeat(${monthCount}, minmax(56px, 1fr))`;
+        chart.style.gridTemplateColumns = `repeat(${data.months.length}, minmax(56px, 1fr))`;
         chart.replaceChildren(...data.months.map(month => {
           const column = document.createElement("div"); column.className = "bb-trend-month";
           const bars = document.createElement("div"); bars.className = "bb-trend-bars";
@@ -671,16 +693,12 @@
           return column;
         }));
         $(".bb-trend-summary", trend).textContent =
-          `Past ${monthCount} months (current month to date) \u00b7 Average monthly income ${peso(data.averages.income, 2)} ` +
-          `\u00b7 Average monthly needs and wants expenses ${peso(data.averages.expenses, 2)}. ` +
-          "Savings are shown separately in the selected-period chart.";
+          `Six-month average: income ${peso(data.averages.income, 2)} per month and needs plus wants spending ${peso(data.averages.expenses, 2)} per month.`;
       } catch (error) {
         alert(error.message);
       }
     }
-    $$(".bb-trend-controls button", trend).forEach(button =>
-      button.addEventListener("click", () => loadTrend(Number(button.dataset.months))));
-    loadTrend(6);
+    loadTrend();
     function render() {
       const res = result, C = res.categories;
       const maxV = Math.max(4000, ...CATS.flatMap(c => [C[c].budget, C[c].actual]));
@@ -749,7 +767,7 @@
     injectCSS();
     if ($(".login-form")) { addIcons(); $("#username") ? initSignup() : initLogin(); return; }
     if (!$(".sidebar") || !shell()) return;
-    try { await loadPlan(); } catch (e) { if (e.message !== "Please log in again.") alert(e.message); return; }
+    try { await loadPlan(); } catch (e) { if (e.message !== "Please log in again.") showAppError(e.message); return; }
     periodLabel();
     if ($(".budgets")) initDashboard();
     else if ($(".expense-table")) initTracker();

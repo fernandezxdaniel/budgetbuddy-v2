@@ -257,12 +257,10 @@ def create_app(database_url=None):
         if not user:
             return fail("Please log in again.", 401)
         try:
-            count = int(request.args.get("months", "6"))
             today = request_today(request.args.get("today"))
-        except (TypeError, ValueError, BudgetError):
-            return fail("Choose 3 or 6 months and a valid date.")
-        if count not in (3, 6):
-            return fail("Monthly trends are available for 3 or 6 months.")
+        except BudgetError as error:
+            return fail(str(error))
+        count = 6
         first = month_start(today, 1 - count)
         last = month_start(today, 1)
         end = min(date(last.year, last.month, monthrange(last.year, last.month)[1]), today)
