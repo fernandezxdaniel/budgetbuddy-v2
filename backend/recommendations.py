@@ -35,6 +35,15 @@ def generate(result):
             f"{peso(categories['savings']['limit'])} for savings (20%). Add category items "
             "and record actual amounts to track this period.",
         )]
+    if period["start"] > period["today"]:
+        return [_recommendation(
+            "info",
+            "This budget period has not started",
+            f"Your targets are {peso(categories['needs']['limit'])} for needs (50%), "
+            f"{peso(categories['wants']['limit'])} for wants (30%), and "
+            f"{peso(categories['savings']['limit'])} for savings (20%). "
+            "Actual-spending recommendations will appear once the period begins.",
+        )]
 
     needs, wants, savings = (
         categories["needs"],

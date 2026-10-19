@@ -52,7 +52,7 @@
   }
  
   /* ---------- the selected period's plan lives on the server ---------- */
-  let plan = null, result = null, chain = Promise.resolve();
+  let plan = null, result = null, incomeEntries = [], chain = Promise.resolve();
   function selectedPeriod() {
     try {
       const saved = JSON.parse(localStorage.getItem("bb_period"));
@@ -65,12 +65,22 @@
     if (selected) { query.set("start", selected.start); query.set("end", selected.end); }
     const r = await api("GET", "/api/plan?" + query);
     plan = r.plan; result = r.result;
+    if (plan.start && plan.end) {
+      localStorage.setItem("bb_period", JSON.stringify({ email: user().email, start: plan.start, end: plan.end }));
+      incomeEntries = (await api("GET", "/api/income?" +
+        new URLSearchParams({ start: plan.start, end: plan.end }))).income;
+    } else {
+      incomeEntries = [];
+    }
   }
   async function loadPeriod(start, end) {
     try {
       const query = new URLSearchParams({ start, end, today: todayISO() });
-      const r = await api("GET", "/api/plan?" + query);
-      plan = r.plan; result = r.result;
+      const [r, incomes] = await Promise.all([
+        api("GET", "/api/plan?" + query),
+        api("GET", "/api/income?" + new URLSearchParams({ start, end })),
+      ]);
+      plan = r.plan; result = r.result; incomeEntries = incomes.income;
       localStorage.setItem("bb_period", JSON.stringify({ email: user().email, start, end }));
       return true;
     } catch (e) {
@@ -108,6 +118,34 @@
       .bb-income-btn:hover{filter:brightness(1.3)}
       .bb-reset-period{padding:8px 12px;border:1px solid #b42318;border-radius:10px;background:#fff;color:#b42318;font:inherit;font-size:12px;cursor:pointer}
       .bb-reset-period:hover{background:#fff1f0}
+      .brand img{background:#fff;border-radius:12px;padding:3px;object-fit:contain}
+      .bb-income-history{margin:20px 0;padding:20px 24px;border:1px solid #dfe3ea;border-radius:20px;background:#fff}
+      .bb-income-history h2{margin:0 0 12px;font-size:18px}
+      .bb-income-list{list-style:none;margin:0;padding:0}
+      .bb-income-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #e4e7ec}
+      .bb-income-row:last-child{border-bottom:0}
+      .bb-income-source{flex:1;min-width:0;font-size:14px}
+      .bb-income-source small{display:block;color:#667085;font-size:11px}
+      .bb-income-amount{font-variant-numeric:tabular-nums;font-weight:600}
+      .bb-trend{margin:24px 0;padding:24px;border:1px solid #dfe3ea;border-radius:20px;background:#fff}
+      .bb-trend-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
+      .bb-trend-head h2{margin:0;font-size:20px}
+      .bb-trend-controls{display:flex;gap:8px}
+      .bb-trend-controls button{padding:7px 12px;border:1px solid #c5cad1;border-radius:9px;background:#fff;cursor:pointer}
+      .bb-trend-controls button[aria-pressed=true]{background:#112d60;color:#fff}
+      .bb-trend-summary{color:#596273;font-size:12px}
+      .bb-trend-compare{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px}
+      .bb-trend-compare label{display:flex;align-items:center;gap:6px}
+      .bb-trend-compare select{padding:6px 8px;border:1px solid #c5cad1;border-radius:8px;background:#fff;font:inherit}
+      .bb-compare-result{min-height:20px;margin:8px 0;color:#344054;font-size:13px;font-weight:500}
+      .bb-trend-chart{display:grid;grid-template-columns:repeat(6,minmax(56px,1fr));gap:12px;align-items:end;min-height:190px;padding:16px 0}
+      .bb-trend-month{display:grid;grid-template-rows:140px auto;gap:8px;text-align:center;font-size:11px}
+      .bb-trend-bars{display:flex;align-items:end;justify-content:center;gap:5px;border-bottom:1px solid #b9c1ce}
+      .bb-trend-bar{width:24px;min-height:2px;border-radius:5px 5px 0 0}
+      .bb-trend-bar.income{background:#112d60}.bb-trend-bar.expenses{background:#0d99ff}
+      .bb-trend-legend{display:flex;justify-content:center;gap:16px;font-size:12px}
+      .bb-trend-legend span::before{display:inline-block;width:9px;height:9px;margin-right:6px;border-radius:2px;background:#112d60;content:""}
+      .bb-trend-legend .expenses::before{background:#0d99ff}
       .bb-dialog{border:0;border-radius:18px;padding:24px;width:min(92vw,400px);font-family:Poppins,Arial,sans-serif}
       .bb-dialog::backdrop{background:rgba(0,0,0,.45)}
       .bb-dialog h3{margin:0 0 10px;text-transform:capitalize}
@@ -144,7 +182,9 @@
       .bb-reco-item.danger{border-left-color:#b42318}.bb-reco-item.warning{border-left-color:#b54708}.bb-reco-item.good{border-left-color:#167048}
       .bb-reco-item h3{margin:0 0 4px;font-size:15px}.bb-reco-item p{margin:0;font-size:13px;line-height:1.6;color:#344054}`;
     document.head.appendChild(s);
-    const l = document.createElement("link"); l.rel = "icon"; l.href = LOGO_MARK; document.head.appendChild(l);
+    let l = $("link[rel='icon']");
+    if (!l) { l = document.createElement("link"); l.rel = "icon"; document.head.appendChild(l); }
+    l.href = LOGO_MARK;
   }
  
   /* ---------- login + sign up ---------- */
@@ -197,7 +237,7 @@
   function shell() {
     const u = user();
     if (!u || !token()) { location.href = "index.html"; return false; }
-    $$(".brand img").forEach(i => { i.src = LOGO_MARK; i.alt = "BudgetBuddy logo"; i.style.cssText = "background:#fff;border-radius:12px;padding:3px;object-fit:contain"; });
+    $$(".brand img").forEach(i => { i.src = LOGO_MARK; i.alt = "BudgetBuddy logo"; });
     $$('a[href="./index.html"]').forEach(a => a.setAttribute("href", "dashboard.html"));
     const nm = $(".profile-name"), em = $(".profile-email"), av = $(".avatar");
     if (nm) nm.textContent = u.name;
@@ -216,7 +256,7 @@
       }
     }
     const reset = $(".bb-reset-period");
-    if (reset) reset.hidden = !plan.start || !plan.end || (!plan.income && !plan.items.length);
+    if (reset) reset.hidden = !plan.start || !plan.end || !plan.items.length;
   }
 
   // Select a date range; changing it loads that period without modifying another period's data.
@@ -332,11 +372,18 @@
         if (startOther) { const r = $('input[value="__other"]', box); r.checked = true; r.dispatchEvent(new Event("change")); }
       });
   }
-  function askIncome(current) {
-    return dialog(`<form method="dialog"><h3>Income for this period</h3>
-      <label>Income available during the selected dates (\u20b1)
-        <input name="income" type="number" min="0.01" max="1000000000" step="0.01" value="${current > 0 ? current : ""}" required></label>
-      ${ROW}</form>`, f => Number(f.get("income")));
+  function askIncome() {
+    const initialDate = todayISO() < plan.start ? plan.start : todayISO() > plan.end ? plan.end : todayISO();
+    return dialog(`<form method="dialog"><h3>Add income</h3>
+      <p class="bb-hint">Income is saved on its date and included in every selected range containing that date.</p>
+      <label>Source<input name="source" maxlength="80" placeholder="Paycheck, allowance, etc."></label>
+      <label>Date<input name="date" type="date" min="${plan.start}" max="${plan.end}" value="${initialDate}" required></label>
+      <label>Amount (\u20b1)<input name="amount" type="number" min="0.01" max="1000000000" step="0.01" required></label>
+      ${ROW}</form>`, f => ({
+        source: String(f.get("source")).trim(),
+        date: String(f.get("date")),
+        amount: Number(f.get("amount")),
+      }));
   }
  
   /* ---------- dashboard page ---------- */
@@ -347,6 +394,10 @@
     incCard.style.position = "relative";
     const incBtn = document.createElement("button");
     incBtn.type = "button"; incBtn.className = "bb-income-btn"; incCard.appendChild(incBtn);
+    const incomeHistory = document.createElement("section");
+    incomeHistory.className = "bb-income-history";
+    incomeHistory.innerHTML = '<h2>Income received in this period</h2><ul class="bb-income-list"></ul>';
+    $(".summary").insertAdjacentElement("afterend", incomeHistory);
  
     const redrawCal = initCalendar(true, async (a, b) => { if (await loadPeriod(a, b)) render(); });
     addPeriodReset(async () => { if (await resetPeriod()) render(); });
@@ -354,8 +405,35 @@
     function render() {
       incAmt.textContent = peso(plan.income, 2, " ");
       balAmt.textContent = peso(result.totals.balance, 2, " ");
-      incBtn.textContent = plan.income > 0 ? "Edit income" : "+ Set income";
+      incBtn.textContent = "+ Add income";
+      incBtn.disabled = !plan.start || !plan.end;
       periodLabel(); redrawCal();
+      const incomeList = $(".bb-income-list", incomeHistory);
+      incomeList.replaceChildren(...incomeEntries.map(entry => {
+        const li = document.createElement("li"); li.className = "bb-income-row";
+        const label = document.createElement("span"); label.className = "bb-income-source";
+        label.textContent = entry.source;
+        const day = document.createElement("small"); day.textContent = fmtDay(entry.date) + ", " + parts(entry.date)[0];
+        label.append(day);
+        const amount = document.createElement("span"); amount.className = "bb-income-amount";
+        amount.textContent = peso(entry.amount, 2);
+        const remove = document.createElement("button"); remove.type = "button";
+        remove.className = "bb-minus"; remove.textContent = "\u2212";
+        remove.setAttribute("aria-label", "Remove income from " + entry.source);
+        remove.addEventListener("click", async () => {
+          try {
+            await api("DELETE", "/api/income/" + entry.id);
+            if (await loadPeriod(plan.start, plan.end)) render();
+          } catch (error) { alert(error.message); }
+        });
+        li.append(label, amount, remove);
+        return li;
+      }));
+      if (!incomeEntries.length) {
+        const empty = document.createElement("li"); empty.className = "bb-hint";
+        empty.textContent = plan.start ? "No income entries in this date range yet." : "Choose a date range to record income.";
+        incomeList.append(empty);
+      }
       cards.forEach(card => {
         const cat = $("h3", card).textContent.trim().toLowerCase(), c = result.categories[cat];
         let t = $(".bb-total", card);
@@ -378,22 +456,26 @@
       });
     }
  
-    async function setIncome() {
+    async function addIncome() {
       if (!plan.start || !plan.end) {
         alert("Choose a budget period on the calendar before entering its income.");
         return;
       }
-      const v = await askIncome(plan.income);
-      if (v !== null && await savePlan({ ...plan, income: v })) render();
+      const entry = await askIncome();
+      if (!entry) return;
+      try {
+        await api("POST", "/api/income", { ...entry, start: plan.start, end: plan.end });
+        if (await loadPeriod(plan.start, plan.end)) render();
+      } catch (error) { alert(error.message); }
     }
-    incBtn.addEventListener("click", setIncome);
+    incBtn.addEventListener("click", addIncome);
  
     async function addTo(cat, startOther) {
       if (!plan.start || !plan.end)
         return alert("Please pick this budget period on the calendar first: click a start date, then an end date.");
       if (plan.income <= 0) {
         alert("Please set the income available for this period first.");
-        await setIncome();
+        await addIncome();
         if (plan.income <= 0) return;
       }
       const c = result.categories[cat], remaining = r2(c.limit - c.budget);
@@ -513,9 +595,95 @@
   function initAnalytics() {
     const redrawCal = initCalendar(true, async (a, b) => { if (await loadPeriod(a, b)) render(); });
     addPeriodReset(async () => { if (await resetPeriod()) render(); });
+    const trend = document.createElement("section");
+    trend.className = "bb-trend";
+    trend.innerHTML = `
+      <div class="bb-trend-head">
+        <h2>Monthly income and expense trend</h2>
+        <div class="bb-trend-controls" aria-label="Trend period">
+          <button type="button" data-months="3" aria-pressed="false">3 months</button>
+          <button type="button" data-months="6" aria-pressed="true">6 months</button>
+        </div>
+      </div>
+      <p class="bb-trend-summary"></p>
+      <div class="bb-trend-compare">
+        <label>Compare <select class="bb-compare-from" aria-label="First month to compare"></select></label>
+        <span>with</span>
+        <label><select class="bb-compare-to" aria-label="Second month to compare"></select></label>
+      </div>
+      <p class="bb-compare-result" aria-live="polite"></p>
+      <div class="bb-trend-chart" role="img" aria-label="Monthly income and expenses"></div>
+      <div class="bb-trend-legend"><span>Income</span><span class="expenses">Needs + wants expenses</span></div>`;
+    $(".chart-card").insertAdjacentElement("afterend", trend);
+    let trendRequest = 0;
+    async function loadTrend(monthCount) {
+      const requestId = ++trendRequest;
+      $$(".bb-trend-controls button", trend).forEach(button => {
+        button.setAttribute("aria-pressed", String(Number(button.dataset.months) === monthCount));
+      });
+      try {
+        const data = await api("GET", "/api/analytics?months=" + monthCount);
+        if (requestId !== trendRequest) return;
+        const max = Math.max(1, ...data.months.flatMap(month => [month.income, month.expenses]));
+        const from = $(".bb-compare-from", trend), to = $(".bb-compare-to", trend);
+        const selectedFrom = from.value, selectedTo = to.value;
+        [from, to].forEach(select => {
+          select.replaceChildren(...data.months.map(month => {
+            const option = document.createElement("option");
+            option.value = month.key; option.textContent = month.label;
+            return option;
+          }));
+        });
+        from.value = data.months.some(month => month.key === selectedFrom)
+          ? selectedFrom : data.months[Math.max(0, data.months.length - 2)].key;
+        to.value = data.months.some(month => month.key === selectedTo)
+          ? selectedTo : data.months[data.months.length - 1].key;
+        const updateComparison = () => {
+          const a = data.months.find(month => month.key === from.value);
+          const b = data.months.find(month => month.key === to.value);
+          if (!a || !b) return;
+          const difference = r2(b.expenses - a.expenses);
+          const percent = a.expenses ? Math.abs(difference) / a.expenses * 100 : null;
+          const direction = difference > 0 ? "increased" : difference < 0 ? "decreased" : "stayed the same";
+          $(".bb-compare-result", trend).textContent = a.key === b.key
+            ? `Select two different months to compare expenses.`
+            : `Needs and wants expenses ${direction} from ${a.label} to ${b.label} by ${peso(Math.abs(difference), 2)}` +
+              (percent === null ? (difference ? "; there was no spending in the first month." : ".")
+                : ` (${percent.toFixed(1)}%).`);
+        };
+        from.onchange = updateComparison; to.onchange = updateComparison;
+        updateComparison();
+        const chart = $(".bb-trend-chart", trend);
+        chart.style.gridTemplateColumns = `repeat(${monthCount}, minmax(56px, 1fr))`;
+        chart.replaceChildren(...data.months.map(month => {
+          const column = document.createElement("div"); column.className = "bb-trend-month";
+          const bars = document.createElement("div"); bars.className = "bb-trend-bars";
+          [["income", month.income], ["expenses", month.expenses]].forEach(([kind, value]) => {
+            const bar = document.createElement("span"); bar.className = "bb-trend-bar " + kind;
+            bar.style.height = Math.max(value > 0 ? 3 : 0, value / max * 100) + "%";
+            bar.title = `${kind === "income" ? "Income" : "Expenses"}: ${peso(value, 2)}`;
+            bars.append(bar);
+          });
+          const label = document.createElement("span");
+          label.textContent = month.label.split(" ")[0].slice(0, 3);
+          label.title = month.label;
+          column.append(bars, label);
+          return column;
+        }));
+        $(".bb-trend-summary", trend).textContent =
+          `Past ${monthCount} months (current month to date) \u00b7 Average monthly income ${peso(data.averages.income, 2)} ` +
+          `\u00b7 Average monthly needs and wants expenses ${peso(data.averages.expenses, 2)}. ` +
+          "Savings are shown separately in the selected-period chart.";
+      } catch (error) {
+        alert(error.message);
+      }
+    }
+    $$(".bb-trend-controls button", trend).forEach(button =>
+      button.addEventListener("click", () => loadTrend(Number(button.dataset.months))));
+    loadTrend(6);
     function render() {
       const res = result, C = res.categories;
-      const maxV = Math.max(1, ...CATS.flatMap(c => [C[c].budget, C[c].actual]));
+      const maxV = Math.max(4000, ...CATS.flatMap(c => [C[c].budget, C[c].actual]));
       const mag = Math.pow(10, Math.floor(Math.log10(maxV)));
       const top = Math.ceil(maxV * 1.1 / mag) * mag;
       $$(".tick").forEach((t, i) => { t.textContent = peso(top * (1 - i / 4)); });
@@ -556,14 +724,14 @@
     button.type = "button";
     button.className = "bb-reset-period";
     button.textContent = "Reset this period";
-    button.hidden = !plan.start || !plan.end || (!plan.income && !plan.items.length);
+    button.hidden = !plan.start || !plan.end || !plan.items.length;
     button.addEventListener("click", onReset);
     label.insertAdjacentElement("afterend", button);
   }
 
   async function resetPeriod() {
     if (!plan.start || !plan.end) return false;
-    if (!confirm(`This will permanently clear income, budgets, and entries for ${fmtRange(plan.start, plan.end)}. Other periods will not be affected.`))
+    if (!confirm(`This will permanently clear budget items and actual entries for ${fmtRange(plan.start, plan.end)}. Dated income entries are kept and remain available to other date ranges.`))
       return false;
     try {
       const query = new URLSearchParams({ start: plan.start, end: plan.end });

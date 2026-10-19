@@ -1,14 +1,16 @@
 import os
 import re
 import secrets
+from calendar import monthrange
 from datetime import date
 
 from flask import Flask, jsonify, request, send_from_directory
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from budget_logic import BudgetError, calculate, plan_to_json, validate_plan
+from budget_logic import BudgetError, P, calculate, plan_to_json, to_centavos, validate_plan
 from database import Database, DuplicateEmail
+from segment_tree import SumSegmentTree
 
 try:
     from flask_cors import CORS
@@ -82,6 +84,18 @@ def create_app(database_url=None):
         validate_plan({"income": 0, "start": start.isoformat(), "end": end.isoformat(), "items": []})
         return start, end
 
+    def period_income(normalized, user_id):
+        if not normalized["start"] or not normalized["end"]:
+            normalized["income"] = 0
+            return
+        normalized["income"] = database.income_total(
+            user_id, normalized["start"], normalized["end"]
+        )
+
+    def month_start(value, offset):
+        index = value.year * 12 + value.month - 1 + offset
+        return date(index // 12, index % 12 + 1, 1)
+
     @app.post("/api/signup")
     def signup():
         data = request.get_json(silent=True)
@@ -135,6 +149,7 @@ def create_app(database_url=None):
         normalized = database.load_plan(
             user["id"], start, end, latest=start is None and end is None
         )
+        period_income(normalized, user["id"])
         return jsonify(ok=True, plan=plan_to_json(normalized), result=calculate(normalized, today))
 
     @app.put("/api/plan")
@@ -148,6 +163,11 @@ def create_app(database_url=None):
         try:
             normalized = validate_plan(data.get("plan"))
             today = request_today(data.get("today"))
+        except BudgetError as error:
+            return fail(str(error))
+        period_income(normalized, user["id"])
+        try:
+            normalized = validate_plan(plan_to_json(normalized) | {"income": P(normalized["income"])})
         except BudgetError as error:
             return fail(str(error))
         database.save_plan(user["id"], normalized)
@@ -170,11 +190,111 @@ def create_app(database_url=None):
             return fail("Choose a dated period before resetting it.")
         deleted = database.delete_period(user["id"], start, end)
         normalized = database.load_plan(user["id"], start, end)
+        period_income(normalized, user["id"])
         return jsonify(
             ok=True,
             deleted=deleted,
             plan=plan_to_json(normalized),
             result=calculate(normalized),
+        )
+
+    @app.get("/api/income")
+    def get_income():
+        user = require_user()
+        if not user:
+            return fail("Please log in again.", 401)
+        try:
+            start, end = request_period(request.args.get("start"), request.args.get("end"))
+        except BudgetError as error:
+            return fail(str(error))
+        if start is None:
+            return fail("Choose a date range to view income.")
+        entries = database.list_income(user["id"], start, end)
+        return jsonify(
+            ok=True,
+            income=[{**entry, "amount": P(entry["amount"])} for entry in entries],
+            total=P(sum(entry["amount"] for entry in entries)),
+        )
+
+    @app.post("/api/income")
+    def add_income():
+        user = require_user()
+        if not user:
+            return fail("Please log in again.", 401)
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            data = {}
+        try:
+            start, end = request_period(data.get("start"), data.get("end"))
+            day = request_today(data.get("date"))
+            amount = to_centavos(data.get("amount"), "Income")
+        except BudgetError as error:
+            return fail(str(error))
+        if start is None or not start <= day <= end:
+            return fail("Income date must be inside the selected date range.")
+        if amount <= 0:
+            return fail("Income amount must be greater than zero.")
+        source = " ".join(str(data.get("source", "")).split()) or "Income"
+        if len(source) > 80:
+            return fail("Income source must be 80 characters or fewer.")
+        entry_id = database.add_income(user["id"], day, amount, source)
+        return jsonify(ok=True, id=entry_id), 201
+
+    @app.delete("/api/income/<int:entry_id>")
+    def remove_income(entry_id):
+        user = require_user()
+        if not user:
+            return fail("Please log in again.", 401)
+        if not database.get_income(user["id"], entry_id):
+            return fail("Income entry was not found.", 404)
+        if not database.delete_income(user["id"], entry_id):
+            return fail("Income entry was not found.", 404)
+        return jsonify(ok=True)
+
+    @app.get("/api/analytics")
+    def monthly_analytics():
+        user = require_user()
+        if not user:
+            return fail("Please log in again.", 401)
+        try:
+            count = int(request.args.get("months", "6"))
+            today = request_today(request.args.get("today"))
+        except (TypeError, ValueError, BudgetError):
+            return fail("Choose 3 or 6 months and a valid date.")
+        if count not in (3, 6):
+            return fail("Monthly trends are available for 3 or 6 months.")
+        first = month_start(today, 1 - count)
+        last = month_start(today, 1)
+        end = min(date(last.year, last.month, monthrange(last.year, last.month)[1]), today)
+        income_by_day, activity_by_day = database.activity_by_day(user["id"], first, end)
+        months = []
+        for offset in range(count):
+            start = month_start(first, offset)
+            month_end = date(start.year, start.month, monthrange(start.year, start.month)[1])
+            days = (month_end - start).days + 1
+            trees = {key: SumSegmentTree(days) for key in ("income", "needs", "wants", "savings")}
+            for day_number in range(days):
+                day = date.fromordinal(start.toordinal() + day_number).isoformat()
+                trees["income"].update(day_number, income_by_day.get(day, 0))
+                for category, amount in activity_by_day.get(day, {}).items():
+                    trees[category].update(day_number, amount)
+            totals = {key: tree.query(0, days - 1) for key, tree in trees.items()}
+            months.append({
+                "key": start.strftime("%Y-%m"),
+                "label": start.strftime("%B %Y"),
+                "income": P(totals["income"]),
+                "needs": P(totals["needs"]),
+                "wants": P(totals["wants"]),
+                "savings": P(totals["savings"]),
+                "expenses": P(totals["needs"] + totals["wants"]),
+            })
+        return jsonify(
+            ok=True,
+            months=months,
+            averages={
+                "income": round(sum(month["income"] for month in months) / count, 2),
+                "expenses": round(sum(month["expenses"] for month in months) / count, 2),
+            },
         )
 
     @app.get("/api/health")

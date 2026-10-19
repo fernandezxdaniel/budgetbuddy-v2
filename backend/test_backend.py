@@ -137,6 +137,10 @@ assert dbo.get_user_by_email("old@x.com")["name"] == "Old"
 assert dbo.create_user("New", "new@x.com", "h") > 1
 legacy = dbo.load_plan(1, date(2026, 10, 1), date(2026, 10, 30))
 assert legacy["income"] == 1000000 and legacy["items"][0]["log"] == [(date(2026, 10, 10), 120000)]
+legacy_income = dbo.list_income(1, date(2026, 10, 1), date(2026, 10, 30))
+assert len(legacy_income) == 1 and legacy_income[0]["amount"] == 1000000
+Database("sqlite:///" + old)
+assert len(Database("sqlite:///" + old).list_income(1, date(2026, 10, 1), date(2026, 10, 30))) == 1
 assert dbo.delete_period(1, date(2026, 10, 1), date(2026, 10, 30))
 assert Database("sqlite:///" + old).load_plan(1, date(2026, 10, 1), date(2026, 10, 30))["items"] == []
  
@@ -155,24 +159,53 @@ assert client.get("/api/plan").status_code == 401
 assert client.get("/api/plan", headers={"Authorization": "Bearer abc"}).status_code == 401
 g = j(client.get("/api/plan?today=2026-10-16", headers=H))
 assert g["plan"]["items"] == [] and g["result"]["recommendations"][0]["title"].startswith("Set income")
+oct_income = client.post("/api/income", headers=H, json={
+    "start": "2026-10-10", "end": "2026-11-10",
+    "date": "2026-10-15", "amount": 10000, "source": "Paycheck",
+})
+assert oct_income.status_code == 201
+october_range = j(client.get(
+    "/api/income?start=2026-10-01&end=2026-10-31", headers=H
+))
+assert october_range["total"] == 10000 and october_range["income"][0]["date"] == "2026-10-15"
+assert client.post("/api/income", headers=H, json={
+    "start": "2026-10-10", "end": "2026-11-10",
+    "date": "2026-11-15", "amount": 100, "source": "Outside range",
+}).status_code == 400
 put = client.put("/api/plan", headers=H, json={"plan": mk(items=ITEMS), "today": "2026-10-16"})
 assert put.status_code == 200 and j(put)["result"]["categories"]["needs"]["actual"] == 4500
 assert j(client.get("/api/plan?today=2026-10-16", headers=H))["plan"] == j(put)["plan"]
+nov_income = client.post("/api/income", headers=H, json={
+    "start": "2026-11-01", "end": "2026-11-30",
+    "date": "2026-11-11", "amount": 12000, "source": "November pay",
+})
+assert nov_income.status_code == 201
 november_plan = mk(income=12000, start="2026-11-01", end="2026-11-30",
                    items=[it("needs", "Rent", 5000, [("2026-11-10", 1200)])])
 nov_put = client.put("/api/plan", headers=H, json={"plan": november_plan, "today": "2026-11-12"})
 assert nov_put.status_code == 200
+Database("sqlite:///" + os.path.join(tmp, "api.db"))
+assert j(client.get("/api/income?start=2026-11-01&end=2026-11-30", headers=H))["total"] == 12000
 oct_get = client.get("/api/plan?start=2026-10-10&end=2026-11-10&today=2026-11-12", headers=H)
 assert j(oct_get)["plan"] == j(put)["plan"]
 nov_get = client.get("/api/plan?start=2026-11-01&end=2026-11-30&today=2026-11-12", headers=H)
 assert j(nov_get)["plan"] == j(nov_put)["plan"]
+trend = j(client.get("/api/analytics?months=3&today=2026-11-12", headers=H))
+assert [m["expenses"] for m in trend["months"]] == [0, 6000, 1200]
+assert [m["income"] for m in trend["months"]] == [0, 10000, 12000]
+assert trend["averages"]["expenses"] == 2400
+assert len(j(client.get("/api/analytics?months=6&today=2026-11-12", headers=H))["months"]) == 6
+assert client.get("/api/analytics?months=5", headers=H).status_code == 400
 assert client.delete("/api/plan?start=2026-11-01&end=2026-11-30", headers=H).status_code == 200
 assert j(client.get("/api/plan?start=2026-10-10&end=2026-11-10&today=2026-11-12", headers=H))["plan"] == j(put)["plan"]
-bad = client.put("/api/plan", headers=H, json={"plan": mk(items=[it("needs", "Rent", 6000)])})
+bad_plan = mk(start="2026-10-10", end="2026-11-10", items=[it("needs", "Rent", 6000)])
+bad = client.put("/api/plan", headers=H, json={"plan": bad_plan, "today": "2026-10-16"})
 assert bad.status_code == 400 and "over its limit" in j(bad)["error"]
-assert j(client.get("/api/plan", headers=H))["plan"] == j(put)["plan"], "a rejected save must change nothing"
+assert j(client.get("/api/plan?start=2026-10-10&end=2026-11-10&today=2026-10-16", headers=H))["plan"] == j(put)["plan"], "a rejected save must change nothing"
 t2 = j(client.post("/api/signup", json={"name": "Ben", "email": "b@x.com", "password": "Abcdef1!"}))["token"]
 assert j(client.get("/api/plan", headers={"Authorization": "Bearer " + t2}))["plan"]["items"] == []
+assert client.delete("/api/income/" + str(j(oct_income)["id"]),
+                     headers={"Authorization": "Bearer " + t2}).status_code == 404
 h = j(client.get("/api/health")); assert h["ok"] and h["database"] == "sqlite"
 assert client.get("/").status_code == 200
  

@@ -11,6 +11,13 @@ same two dates later reopens that period; a new date range starts empty. Income
 and 50/30/20 targets are calculated for the selected period. **Reset this
 period** clears only that range, after confirmation.
 
+Income is recorded as dated transactions and summed when it falls inside the
+selected range. Analytics uses the segment tree to total daily income and
+needs/wants actuals into 3- or 6-month trends, with monthly averages and a
+selectable month-to-month expense comparison. The current month is a
+month-to-date total; expenses include needs and wants, while savings remain a
+separate 50/30/20 category.
+
 ## Run locally
 
 From the repository root, install the backend dependencies and start Flask:
