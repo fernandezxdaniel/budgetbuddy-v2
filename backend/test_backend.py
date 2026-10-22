@@ -1,5 +1,6 @@
 import os, random, shutil, tempfile
 from datetime import date
+from decimal import Decimal
  
 os.environ["SECRET_KEY"] = "test-secret"
 TEST_DB_DIR = tempfile.mkdtemp()
@@ -43,6 +44,10 @@ ITEMS = [
 ]
 norm = validate_plan(mk(items=ITEMS))
 r = calculate(norm, date(2026, 10, 16))
+decimal_income_plan = {**norm, "income": Decimal(norm["income"])}
+decimal_result = calculate(decimal_income_plan, date(2026, 10, 16))
+assert isinstance(decimal_result["categories"]["savings"]["limit"], float)
+assert isinstance(decimal_result["categories"]["savings"]["actual"], float)
 c = r["categories"]
 assert (c["needs"]["limit"], c["needs"]["budget"], c["needs"]["actual"], c["needs"]["left"]) == (5000, 5000, 4500, 500)
 assert (c["wants"]["limit"], c["wants"]["budget"], c["wants"]["actual"]) == (3000, 3000, 1500)

@@ -30,7 +30,7 @@ def to_centavos(value, field="amount", signed=False):
  
  
 def P(centavos):
-    return round(centavos / 100, 2)
+    return float(round(centavos / 100, 2))
  
  
 def _fmt(centavos):
