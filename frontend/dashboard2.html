@@ -260,6 +260,10 @@
       white-space: nowrap;
     }
 
+    .summary-card:first-child .amount {
+      color: #40c0e7;
+    }
+
 
    
     .calendar {
@@ -452,6 +456,17 @@
     .expense-table tbody td {
       color: var(--muted);
       font-size: 16px;
+    }
+
+    .expense-table tbody td:nth-child(2),
+    .expense-table tfoot td:nth-child(2) {
+      color: #93c5fd;
+    }
+
+    .expense-table tbody td:nth-child(4),
+    .expense-table tfoot td:nth-child(4) {
+      color: var(--muted);
+      font-weight: 500;
     }
 
 
