@@ -550,16 +550,17 @@
   function initTracker() {
     const redrawCal = initCalendar(true, async (a, b) => { if (await loadPeriod(a, b)) render(); });
     addPeriodReset(async () => { if (await resetPeriod()) render(); });
-    const GREEN = "#6ce9a6", RED = "#f97066", money = n => peso(n, 2);
+    const GREEN = "#6ce9a6", RED = "#f97066", NEUTRAL = "#f8fafc", money = n => peso(n, 2);
     const catRows = $$(".expense-table tbody tr");
     const baseDesc = catRows.map(r => $(".category-description", r).textContent.trim());
  
     // Left stays "-" until an Actual has been entered.
     function leftCell(td, budget, actual, entered, savings) {
-      if (!entered) { td.textContent = "\u2014"; td.style.color = ""; return; }
+      if (!entered) { td.textContent = "\u2014"; td.style.color = NEUTRAL; return; }
       const left = r2(budget - actual);
       td.textContent = money(left);
-      td.style.color = savings ? (left <= 0 ? GREEN : "") : (left >= 0 ? GREEN : RED);
+      if (actual === 0) td.style.color = NEUTRAL;
+      else td.style.color = savings ? (left <= 0 ? GREEN : RED) : (left > 0 ? GREEN : RED);
     }
     function cellInput(value, label, onCommit) {
       const inp = document.createElement("input");
