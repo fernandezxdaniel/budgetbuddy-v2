@@ -555,12 +555,12 @@
     const baseDesc = catRows.map(r => $(".category-description", r).textContent.trim());
  
     // Left stays "-" until an Actual has been entered.
-    function leftCell(td, budget, actual, entered, savings) {
+    function leftCell(td, budget, actual, entered) {
       if (!entered) { td.textContent = "\u2014"; td.style.color = NEUTRAL; return; }
       const left = r2(budget - actual);
       td.textContent = money(left);
       if (actual === 0) td.style.color = NEUTRAL;
-      else td.style.color = savings ? (left <= 0 ? GREEN : RED) : (left > 0 ? GREEN : RED);
+      else td.style.color = left > 0 ? GREEN : RED;
     }
     function cellInput(value, label, onCommit) {
       const inp = document.createElement("input");
@@ -594,7 +594,7 @@
       CATS.forEach((cat, i) => {
         const row = catRows[i], c = res.categories[cat], cells = $$("td", row);
         cells[0].textContent = money(c.budget); cells[1].textContent = money(c.actual);
-        leftCell(cells[2], c.budget, c.actual, c.entered, cat === "savings");
+        leftCell(cells[2], c.budget, c.actual, c.entered);
         $(".category-description", row).textContent = `${baseDesc[i]} \u00b7 Limit ${money(c.limit)} (${c.ratio}%)`;
         let anchor = row;
         c.items.forEach(it => {                 // the items chosen on the dashboard, under their category
@@ -603,13 +603,13 @@
           const tdB = document.createElement("td"); tdB.className = "number"; tdB.append(cellInput(it.budget, `${it.name} budget`, v => editBudget(it, v)));
           const tdA = document.createElement("td"); tdA.className = "number"; tdA.append(cellInput(it.actual, `${it.name} actual`, v => editActual(it, v)));
           const tdL = document.createElement("td"); tdL.className = "number";
-          leftCell(tdL, it.budget, it.actual, it.entered, cat === "savings");
+          leftCell(tdL, it.budget, it.actual, it.entered);
           tr.append(th, tdB, tdA, tdL); anchor.after(tr); anchor = tr;
         });
       });
       const t = res.totals, tf = $$(".expense-table tfoot td");
       tf[0].textContent = money(t.budget); tf[1].textContent = money(t.actual);
-      leftCell(tf[2], t.budget, t.actual, res.entered_any, false);
+      leftCell(tf[2], t.budget, t.actual, res.entered_any);
       const a = $$(".summary-card .amount");
       if (a[0]) a[0].textContent = peso(res.income, 2, " ");
       if (a[1]) a[1].textContent = peso(t.balance, 2, " ");
