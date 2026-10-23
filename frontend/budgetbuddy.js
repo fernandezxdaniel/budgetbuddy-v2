@@ -132,6 +132,8 @@
       .bb-income-list{list-style:none;margin:0;padding:0}
       .bb-income-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #e4e7ec}
       .bb-income-row:last-child{border-bottom:0}
+      .bb-income-edit{padding:5px 9px;border:1px solid #c5cad1;border-radius:8px;background:#fff;color:#344054;font:inherit;font-size:12px;cursor:pointer}
+      .bb-income-edit:hover{background:#eef4fb}
       .bb-income-source{flex:1;min-width:0;font-size:14px}
       .bb-income-source small{display:block;color:#667085;font-size:11px}
       .bb-income-amount{font-variant-numeric:tabular-nums;font-weight:600}
@@ -406,9 +408,10 @@
         if (startOther) { const r = $('input[value="__other"]', box); r.checked = true; r.dispatchEvent(new Event("change")); }
       });
   }
-  function askIncome() {
-    const initialDate = todayISO() < plan.start ? plan.start : todayISO() > plan.end ? plan.end : todayISO();
-    return dialog(`<form method="dialog"><h3>Add income</h3>
+  function askIncome(existing = null) {
+    const initialDate = existing ? existing.date
+      : todayISO() < plan.start ? plan.start : todayISO() > plan.end ? plan.end : todayISO();
+    return dialog(`<form method="dialog"><h3>${existing ? "Edit" : "Add"} income</h3>
       <p class="bb-hint">This income is recorded on one date and included in the selected period (${fmtRange(plan.start, plan.end)}) when that date falls within it. Choose any date in the selected period.</p>
       <label>Source<input name="source" maxlength="80" placeholder="Paycheck, allowance, etc."></label>
       <label>Date<input name="date" type="date" min="${plan.start}" max="${plan.end}" value="${initialDate}" required></label>
@@ -417,7 +420,12 @@
         source: String(f.get("source")).trim(),
         date: String(f.get("date")),
         amount: Number(f.get("amount")),
-      }));
+      }), dlg => {
+        if (!existing) return;
+        $('input[name="source"]', dlg).value = existing.source;
+        $('input[name="date"]', dlg).value = existing.date;
+        $('input[name="amount"]', dlg).value = Number(existing.amount).toFixed(2);
+      });
   }
  
   /* ---------- dashboard page ---------- */
@@ -452,6 +460,17 @@
         label.append(day);
         const amount = document.createElement("span"); amount.className = "bb-income-amount";
         amount.textContent = peso(entry.amount, 2);
+        const edit = document.createElement("button"); edit.type = "button";
+        edit.className = "bb-income-edit"; edit.textContent = "Edit";
+        edit.setAttribute("aria-label", "Edit income from " + entry.source);
+        edit.addEventListener("click", async () => {
+          const updated = await askIncome(entry);
+          if (!updated) return;
+          try {
+            await api("PUT", "/api/income/" + entry.id, { ...updated, start: plan.start, end: plan.end });
+            if (await loadPeriod(plan.start, plan.end)) render();
+          } catch (error) { alert(error.message); }
+        });
         const remove = document.createElement("button"); remove.type = "button";
         remove.className = "bb-minus"; remove.textContent = "\u2212";
         remove.setAttribute("aria-label", "Remove income from " + entry.source);
@@ -463,7 +482,7 @@
             if (await loadPeriod(plan.start, plan.end)) render();
           } catch (error) { alert(error.message); }
         });
-        li.append(label, amount, remove);
+        li.append(label, amount, edit, remove);
         return li;
       }));
       if (!incomeEntries.length) {

@@ -21,7 +21,8 @@ previous six months, monthly averages, and a selectable month-to-month expense
 comparison. The current month is a month-to-date total; expenses include needs
 and wants, while savings remain a separate 50/30/20 category. Deleting income
 does not delete actual expenses because the two are stored separately and are
-not linked to one another.
+not linked to one another. Income transactions can be edited or deleted without
+changing actual expense entries.
 
 ## Run locally
 

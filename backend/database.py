@@ -341,6 +341,15 @@ class Database:
             ), (user_id, day.isoformat(), amount, source, _now()))
             return cur.fetchone()[0]
 
+    def update_income(self, user_id, transaction_id, day, amount, source):
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(self._q(
+                "UPDATE income_transactions SET day = ?, amount = ?, source = ? "
+                "WHERE user_id = ? AND id = ?"
+            ), (day.isoformat(), amount, source, user_id, transaction_id))
+            return cur.rowcount > 0
+
     def delete_income(self, user_id, transaction_id):
         with self.connect() as conn:
             cur = conn.cursor()

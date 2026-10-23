@@ -169,10 +169,21 @@ oct_income = client.post("/api/income", headers=H, json={
     "date": "2026-10-15", "amount": 10000, "source": "Paycheck",
 })
 assert oct_income.status_code == 201
+oct_income_id = j(oct_income)["id"]
+edited_income = client.put("/api/income/" + str(oct_income_id), headers=H, json={
+    "start": "2026-10-10", "end": "2026-11-10",
+    "date": "2026-10-23", "amount": 10000, "source": "Paycheck updated",
+})
+assert edited_income.status_code == 200
+assert client.put("/api/income/" + str(oct_income_id), headers=H, json={
+    "start": "2026-10-10", "end": "2026-11-10",
+    "date": "2026-11-15", "amount": 10000, "source": "Outside range",
+}).status_code == 400
 october_range = j(client.get(
     "/api/income?start=2026-10-01&end=2026-10-31", headers=H
 ))
-assert october_range["total"] == 10000 and october_range["income"][0]["date"] == "2026-10-15"
+assert october_range["total"] == 10000 and october_range["income"][0]["date"] == "2026-10-23"
+assert october_range["income"][0]["source"] == "Paycheck updated"
 october_plan = j(client.get(
     "/api/plan?start=2026-10-01&end=2026-10-31&today=2026-10-23", headers=H
 ))
@@ -236,10 +247,14 @@ assert bad.status_code == 400 and "over its limit" in j(bad)["error"]
 assert j(client.get("/api/plan?start=2026-10-10&end=2026-11-10&today=2026-10-16", headers=H))["plan"] == j(put)["plan"], "a rejected save must change nothing"
 t2 = j(client.post("/api/signup", json={"name": "Ben", "email": "b@x.com", "password": "Abcdef1!"}))["token"]
 assert j(client.get("/api/plan", headers={"Authorization": "Bearer " + t2}))["plan"]["items"] == []
-assert client.delete("/api/income/" + str(j(oct_income)["id"]),
+assert client.put("/api/income/" + str(oct_income_id), headers={"Authorization": "Bearer " + t2}, json={
+    "start": "2026-10-10", "end": "2026-11-10",
+    "date": "2026-10-24", "amount": 10000, "source": "Unauthorized",
+}).status_code == 404
+assert client.delete("/api/income/" + str(oct_income_id),
                      headers={"Authorization": "Bearer " + t2}).status_code == 404
 assert client.delete(
-    "/api/income/" + str(j(oct_income)["id"]), headers=H
+    "/api/income/" + str(oct_income_id), headers=H
 ).status_code == 200
 after_income_delete = j(client.get(
     "/api/plan?start=2026-10-10&end=2026-11-10&today=2026-11-12", headers=H

@@ -240,6 +240,33 @@ def create_app(database_url=None):
         entry_id = database.add_income(user["id"], day, amount, source)
         return jsonify(ok=True, id=entry_id), 201
 
+    @app.put("/api/income/<int:entry_id>")
+    def update_income(entry_id):
+        user = require_user()
+        if not user:
+            return fail("Please log in again.", 401)
+        if not database.get_income(user["id"], entry_id):
+            return fail("Income entry was not found.", 404)
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            data = {}
+        try:
+            start, end = request_period(data.get("start"), data.get("end"))
+            day = request_today(data.get("date"))
+            amount = to_centavos(data.get("amount"), "Income")
+        except BudgetError as error:
+            return fail(str(error))
+        if start is None or not start <= day <= end:
+            return fail("Income date must be inside the selected date range.")
+        if amount <= 0:
+            return fail("Income amount must be greater than zero.")
+        source = " ".join(str(data.get("source", "")).split()) or "Income"
+        if len(source) > 80:
+            return fail("Income source must be 80 characters or fewer.")
+        if not database.update_income(user["id"], entry_id, day, amount, source):
+            return fail("Income entry was not found.", 404)
+        return jsonify(ok=True)
+
     @app.delete("/api/income/<int:entry_id>")
     def remove_income(entry_id):
         user = require_user()
