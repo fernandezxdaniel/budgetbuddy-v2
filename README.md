@@ -12,12 +12,16 @@ same two dates later reopens that period; a new date range starts empty. Income
 and 50/30/20 targets are calculated for the selected period. **Reset this
 period** clears only that range, after confirmation.
 
-Income is recorded as dated transactions and summed when it falls inside the
-selected range. Analytics uses the segment tree to total daily income and
-needs/wants actuals into a fixed six-month cash-flow trend, with monthly
-averages and a selectable month-to-month expense comparison. The current month
-is a month-to-date total; expenses include needs and wants, while savings remain
-a separate 50/30/20 category.
+Income is recorded as a dated transaction and included in the full selected
+budget period whenever its date falls within that period. The income date is
+the transaction date, not a one-day budget period. Analytics uses the segment
+tree to total daily income and needs/wants actuals across a selectable
+six-calendar-month window, with shortcuts for the latest six months and the
+previous six months, monthly averages, and a selectable month-to-month expense
+comparison. The current month is a month-to-date total; expenses include needs
+and wants, while savings remain a separate 50/30/20 category. Deleting income
+does not delete actual expenses because the two are stored separately and are
+not linked to one another.
 
 ## Run locally
 

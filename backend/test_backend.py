@@ -173,6 +173,14 @@ october_range = j(client.get(
     "/api/income?start=2026-10-01&end=2026-10-31", headers=H
 ))
 assert october_range["total"] == 10000 and october_range["income"][0]["date"] == "2026-10-15"
+october_plan = j(client.get(
+    "/api/plan?start=2026-10-01&end=2026-10-31&today=2026-10-23", headers=H
+))
+assert october_plan["plan"]["income"] == 10000
+assert october_plan["result"]["period"]["days"] == 31
+assert october_plan["result"]["period"]["elapsed"] == 23
+assert october_plan["result"]["period"]["days_left"] == 8
+assert october_plan["result"]["categories"]["needs"]["limit"] == 5000
 assert client.post("/api/income", headers=H, json={
     "start": "2026-10-10", "end": "2026-11-10",
     "date": "2026-11-15", "amount": 100, "source": "Outside range",
@@ -200,6 +208,26 @@ assert len(trend["months"]) == 6
 assert [m["expenses"] for m in trend["months"][-2:]] == [6000, 1200]
 assert [m["income"] for m in trend["months"][-2:]] == [10000, 12000]
 assert trend["averages"]["expenses"] == 1200
+custom_trend = j(client.get(
+    "/api/analytics?start_month=2026-05&today=2026-11-12", headers=H
+))
+assert [month["key"] for month in custom_trend["months"]] == [
+    "2026-05", "2026-06", "2026-07", "2026-08", "2026-09", "2026-10"
+]
+assert custom_trend["months"][-1]["income"] == 10000
+assert custom_trend["months"][-1]["expenses"] == 6000
+assert client.get(
+    "/api/analytics?start_month=2026-07&today=2026-11-12", headers=H
+).status_code == 400
+assert client.get(
+    "/api/analytics?start_month=2026-1&today=2026-11-12", headers=H
+).status_code == 400
+previous_trend = j(client.get(
+    "/api/analytics?start_month=2025-12&today=2026-11-12", headers=H
+))
+assert [month["key"] for month in previous_trend["months"]] == [
+    "2025-12", "2026-01", "2026-02", "2026-03", "2026-04", "2026-05"
+]
 assert client.delete("/api/plan?start=2026-11-01&end=2026-11-30", headers=H).status_code == 200
 assert j(client.get("/api/plan?start=2026-10-10&end=2026-11-10&today=2026-11-12", headers=H))["plan"] == j(put)["plan"]
 bad_plan = mk(start="2026-10-10", end="2026-11-10", items=[it("needs", "Rent", 6000)])
@@ -210,6 +238,15 @@ t2 = j(client.post("/api/signup", json={"name": "Ben", "email": "b@x.com", "pass
 assert j(client.get("/api/plan", headers={"Authorization": "Bearer " + t2}))["plan"]["items"] == []
 assert client.delete("/api/income/" + str(j(oct_income)["id"]),
                      headers={"Authorization": "Bearer " + t2}).status_code == 404
+assert client.delete(
+    "/api/income/" + str(j(oct_income)["id"]), headers=H
+).status_code == 200
+after_income_delete = j(client.get(
+    "/api/plan?start=2026-10-10&end=2026-11-10&today=2026-11-12", headers=H
+))
+assert after_income_delete["plan"]["income"] == 0
+assert after_income_delete["result"]["categories"]["needs"]["actual"] == 4500
+assert after_income_delete["result"]["categories"]["wants"]["actual"] == 1500
 h = j(client.get("/api/health")); assert h["ok"] and h["database"] == "sqlite"
 assert client.get("/").status_code == 200
 assert client.get("/create-account.html").status_code == 200

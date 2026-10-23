@@ -261,8 +261,20 @@ def create_app(database_url=None):
         except BudgetError as error:
             return fail(str(error))
         count = 6
-        first = month_start(today, 1 - count)
-        last = month_start(today, 1)
+        latest_start = month_start(today, 1 - count)
+        start_month = request.args.get("start_month")
+        if start_month is None:
+            first = latest_start
+        else:
+            if not re.fullmatch(r"\d{4}-\d{2}", start_month):
+                return fail("Start month must use YYYY-MM format.")
+            try:
+                first = date.fromisoformat(start_month + "-01")
+            except ValueError:
+                return fail("Start month must use YYYY-MM format.")
+            if first > latest_start:
+                return fail("Choose a six-month period that ends no later than the current month.")
+        last = month_start(first, count)
         end = min(date(last.year, last.month, monthrange(last.year, last.month)[1]), today)
         income_by_day, activity_by_day = database.activity_by_day(user["id"], first, end)
         months = []

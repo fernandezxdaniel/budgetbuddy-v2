@@ -138,6 +138,11 @@
       .bb-trend{margin:24px 0;padding:24px;border:1px solid #dfe3ea;border-radius:20px;background:#fff}
       .bb-trend-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
       .bb-trend-head h2{margin:0;font-size:20px}
+      .bb-trend-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0}
+      .bb-trend-controls label{display:flex;align-items:center;gap:8px;font-size:12px}
+      .bb-trend-controls input,.bb-trend-controls button{padding:7px 10px;border:1px solid #c5cad1;border-radius:8px;background:#fff;color:#182230;font:inherit}
+      .bb-trend-controls button{cursor:pointer}
+      .bb-trend-controls button:hover{background:#eef4fb}
       .bb-trend-summary{color:#596273;font-size:12px}
       .bb-trend-compare{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px}
       .bb-trend-compare label{display:flex;align-items:center;gap:6px}
@@ -404,7 +409,7 @@
   function askIncome() {
     const initialDate = todayISO() < plan.start ? plan.start : todayISO() > plan.end ? plan.end : todayISO();
     return dialog(`<form method="dialog"><h3>Add income</h3>
-      <p class="bb-hint">Income is saved on its date and included in every selected range containing that date.</p>
+      <p class="bb-hint">This income is recorded on one date and included in the selected period (${fmtRange(plan.start, plan.end)}) when that date falls within it. Choose any date in the selected period.</p>
       <label>Source<input name="source" maxlength="80" placeholder="Paycheck, allowance, etc."></label>
       <label>Date<input name="date" type="date" min="${plan.start}" max="${plan.end}" value="${initialDate}" required></label>
       <label>Amount (\u20b1)<input name="amount" type="number" min="0.01" max="1000000000" step="0.01" required></label>
@@ -451,6 +456,8 @@
         remove.className = "bb-minus"; remove.textContent = "\u2212";
         remove.setAttribute("aria-label", "Remove income from " + entry.source);
         remove.addEventListener("click", async () => {
+          if (!confirm(`Delete the ${peso(entry.amount, 2)} income entry "${entry.source}"? Actual expenses are stored separately and will not be deleted.`))
+            return;
           try {
             await api("DELETE", "/api/income/" + entry.id);
             if (await loadPeriod(plan.start, plan.end)) render();
@@ -626,13 +633,28 @@
   function initAnalytics() {
     const redrawCal = initCalendar(true, async (a, b) => { if (await loadPeriod(a, b)) render(); });
     addPeriodReset(async () => { if (await resetPeriod()) render(); });
+    const shiftMonth = (month, offset) => {
+      const [year, monthNumber] = month.split("-").map(Number);
+      const index = year * 12 + monthNumber - 1 + offset;
+      const shiftedYear = Math.floor(index / 12);
+      return `${shiftedYear}-${pad(index - shiftedYear * 12 + 1)}`;
+    };
+    const latestStart = shiftMonth(todayISO().slice(0, 7), -5);
+    const previousStart = shiftMonth(latestStart, -6);
     const trend = document.createElement("section");
     trend.className = "bb-trend";
     trend.innerHTML = `
       <div class="bb-trend-head">
         <h2>Monthly cash flow</h2>
       </div>
-      <p class="bb-hint">Each month compares income received with needs and wants spent. The current month is month-to-date; savings are tracked separately below.</p>
+      <div class="bb-trend-controls">
+        <label>Six-month period starts
+          <input class="bb-trend-start" type="month" max="${latestStart}" aria-label="First month of the six-month analysis period">
+        </label>
+        <button class="bb-trend-last" type="button">Last 6 months</button>
+        <button class="bb-trend-previous" type="button">Previous 6 months</button>
+      </div>
+      <p class="bb-hint">The chart shows the selected month and the next five calendar months. The current month is month-to-date; savings are tracked separately below.</p>
       <p class="bb-trend-summary"></p>
       <div class="bb-trend-compare">
         <span>Compare needs and wants spending:</span>
@@ -644,9 +666,14 @@
       <div class="bb-trend-chart" role="img" aria-label="Monthly income and expenses"></div>
       <div class="bb-trend-legend"><span>Income</span><span class="expenses">Needs + wants expenses</span></div>`;
     $(".chart-card").insertAdjacentElement("afterend", trend);
-    async function loadTrend() {
+    const monthInput = $(".bb-trend-start", trend);
+    monthInput.value = latestStart;
+    let trendRequest = 0;
+    async function loadTrend(startMonth) {
+      const requestId = ++trendRequest;
       try {
-        const data = await api("GET", "/api/analytics");
+        const data = await api("GET", "/api/analytics?" + new URLSearchParams({ start_month: startMonth }));
+        if (requestId !== trendRequest) return;
         const max = Math.max(1, ...data.months.flatMap(month => [month.income, month.expenses]));
         const from = $(".bb-compare-from", trend), to = $(".bb-compare-to", trend);
         const selectedFrom = from.value, selectedTo = to.value;
@@ -694,12 +721,23 @@
           return column;
         }));
         $(".bb-trend-summary", trend).textContent =
-          `Six-month average: income ${peso(data.averages.income, 2)} per month and needs plus wants spending ${peso(data.averages.expenses, 2)} per month.`;
+          `${data.months[0].label} to ${data.months[data.months.length - 1].label} · Six-month average: income ${peso(data.averages.income, 2)} per month and needs plus wants spending ${peso(data.averages.expenses, 2)} per month.`;
       } catch (error) {
-        alert(error.message);
+        if (requestId === trendRequest) alert(error.message);
       }
     }
-    loadTrend();
+    monthInput.addEventListener("change", () => {
+      if (monthInput.value) loadTrend(monthInput.value);
+    });
+    $(".bb-trend-last", trend).addEventListener("click", () => {
+      monthInput.value = latestStart;
+      loadTrend(latestStart);
+    });
+    $(".bb-trend-previous", trend).addEventListener("click", () => {
+      monthInput.value = previousStart;
+      loadTrend(previousStart);
+    });
+    loadTrend(latestStart);
     function render() {
       const res = result, C = res.categories;
       const maxV = Math.max(4000, ...CATS.flatMap(c => [C[c].budget, C[c].actual]));
