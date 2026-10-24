@@ -189,12 +189,14 @@
       .bb-cell{width:100%;padding:6px 8px;border:1px solid #274258;border-radius:8px;background:#101f2c;color:#fff;font:inherit;font-size:14px;text-align:left}
       .bb-cell:focus{outline:2px solid #40c0e7}
       .bb-actual-total{display:block;margin-bottom:6px;font-weight:600}
-      .bb-actual-entries{margin-top:7px;font-size:11px}
-      .bb-actual-entries summary{color:#a8b0be;cursor:pointer}
-      .bb-actual-entries ul{list-style:none;margin:5px 0 0;padding:0}
-      .bb-actual-entry{display:flex;align-items:center;gap:5px;padding:4px 0}
+      .bb-actual-history{margin-top:18px;padding:16px;border:1px solid #2b303a;border-radius:14px;background:#10141b}
+      .bb-actual-history h3{margin:0 0 12px;font-size:15px}
+      .bb-actual-category{margin-top:12px}
+      .bb-actual-category h4{margin:0 0 6px;color:#a8b0be;font-size:12px;text-transform:uppercase;letter-spacing:.06em}
+      .bb-actual-list{list-style:none;margin:0;padding:0}
+      .bb-actual-entry{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid #2b303a;font-size:12px}
       .bb-actual-entry span{flex:1;min-width:0}
-      .bb-actual-entry button{padding:3px 6px;border:1px solid #526174;border-radius:6px;background:transparent;color:#d9dfea;font:inherit;cursor:pointer}
+      .bb-actual-entry button{padding:5px 9px;border:1px solid #526174;border-radius:7px;background:transparent;color:#d9dfea;font:inherit;cursor:pointer}
       .bb-actual-entry button:hover{background:#263449}
       .bb-actual-entry .bb-actual-delete{border-color:#f97066;color:#f97066}
       .bb-reco{margin-top:28px}
@@ -599,6 +601,10 @@
     const GREEN = "#6ce9a6", RED = "#f97066", NEUTRAL = "#f8fafc", money = n => peso(n, 2);
     const catRows = $$(".expense-table tbody tr");
     const baseDesc = catRows.map(r => $(".category-description", r).textContent.trim());
+    const actualHistory = document.createElement("section");
+    actualHistory.className = "bb-actual-history";
+    actualHistory.setAttribute("aria-labelledby", "actual-history-title");
+    $("#table-note").insertAdjacentElement("afterend", actualHistory);
  
     // Left stays "-" until an Actual has been entered.
     function leftCell(td, budget, actual, entered) {
@@ -614,14 +620,27 @@
       inp.value = value === "" ? "" : Number(value).toFixed(2); inp.setAttribute("aria-label", label);
       if (commitOnEnter) inp.placeholder = "Add expense";
       inp.addEventListener("focus", () => inp.select());
-      if (commitOnEnter) inp.addEventListener("keydown", e => {
-        if (e.key === "Enter") { e.preventDefault(); inp.blur(); }
-      });
-      inp.addEventListener("change", () => {
+      let lastSubmitted = null;
+      const commit = () => {
         const v = Number(inp.value);
-        if (inp.value === "" || !Number.isFinite(v) || v < 0) { alert("Please enter an amount of 0 or more."); render(); return; }
-        onCommit(r2(v));
+        if (inp.value === "" || !Number.isFinite(v) || v < (commitOnEnter ? 0.01 : 0)) {
+          alert(commitOnEnter ? "Please enter an expense amount greater than zero." : "Please enter an amount of 0 or more.");
+          render();
+          return;
+        }
+        if (lastSubmitted === v) return;
+        lastSubmitted = v;
+        inp.disabled = true;
+        Promise.resolve(onCommit(r2(v))).catch(error => {
+          alert(error.message);
+          render();
+        });
+      };
+      inp.addEventListener("input", () => { lastSubmitted = null; });
+      if (commitOnEnter) inp.addEventListener("keydown", e => {
+        if (e.key === "Enter") { e.preventDefault(); commit(); inp.blur(); }
       });
+      inp.addEventListener("change", commit);
       return inp;
     }
     async function editBudget(it, v) {          // the server refuses anything over the 50/30/20 limit
@@ -669,40 +688,60 @@
         $(".category-description", row).textContent = `${baseDesc[i]} \u00b7 Limit ${money(c.limit)} (${c.ratio}%)`;
         let anchor = row;
         c.items.forEach(it => {                 // the items chosen on the dashboard, under their category
+          const savedItem = plan.items.find(item => item.id === it.id);
+          if (!savedItem) return;
           const tr = document.createElement("tr"); tr.className = "bb-item-row";
           const th = document.createElement("th"); th.scope = "row"; th.textContent = it.name;
           const tdB = document.createElement("td"); tdB.className = "number"; tdB.append(cellInput(it.budget, `${it.name} budget`, v => editBudget(it, v)));
           const tdA = document.createElement("td"); tdA.className = "number";
           const actualTotal = document.createElement("span"); actualTotal.className = "bb-actual-total";
           actualTotal.textContent = money(it.actual);
-          tdA.append(actualTotal, cellInput("", `Enter an additional actual amount for ${it.name}; current period total ${money(it.actual)}`, v => addActual(it, v), true));
-          if (it.log.length) {
-            const details = document.createElement("details"); details.className = "bb-actual-entries";
-            const summary = document.createElement("summary"); summary.textContent = `Recorded entries (${it.log.length})`;
-            const list = document.createElement("ul");
-            it.log.forEach((entry, entryIndex) => {
-              const entryRow = document.createElement("li"); entryRow.className = "bb-actual-entry";
-              const label = document.createElement("span");
-              label.textContent = `${fmtDay(entry.date)}, ${parts(entry.date)[0]} · ${money(entry.amount)}`;
-              const edit = document.createElement("button"); edit.type = "button"; edit.textContent = "Edit";
-              edit.setAttribute("aria-label", `Edit ${it.name} actual ${entryIndex + 1}`);
-              edit.addEventListener("click", async () => {
-                const updated = await askActualEntry(entry);
-                if (updated) await editActualEntry(it, entryIndex, updated);
-              });
-              const remove = document.createElement("button"); remove.type = "button";
-              remove.className = "bb-actual-delete"; remove.textContent = "Delete";
-              remove.setAttribute("aria-label", `Delete ${it.name} actual ${entryIndex + 1}`);
-              remove.addEventListener("click", () => deleteActualEntry(it, entryIndex));
-              entryRow.append(label, edit, remove); list.append(entryRow);
-            });
-            details.append(summary, list); tdA.append(details);
-          }
+          const actualInput = cellInput("", `Enter an additional actual amount for ${it.name}; current period total ${money(it.actual)}`, v => addActual(savedItem, v), true);
+          actualInput.disabled = !plan.start || !plan.end;
+          tdA.append(actualTotal, actualInput);
           const tdL = document.createElement("td"); tdL.className = "number";
           leftCell(tdL, it.budget, it.actual, it.entered);
           tr.append(th, tdB, tdA, tdL); anchor.after(tr); anchor = tr;
         });
       });
+      const historyTitle = document.createElement("h3");
+      historyTitle.id = "actual-history-title";
+      historyTitle.textContent = "Recorded actual expenses";
+      actualHistory.replaceChildren(historyTitle);
+      let entryCount = 0;
+      CATS.forEach(cat => {
+        const categoryItems = plan.items.filter(item => item.category === cat);
+        const entries = categoryItems.flatMap(item => item.log
+          .map((entry, entryIndex) => ({ item, entry, entryIndex }))
+          .filter(({ entry }) => plan.start && plan.end && entry.date >= plan.start && entry.date <= plan.end));
+        if (!entries.length) return;
+        entryCount += entries.length;
+        const section = document.createElement("section"); section.className = "bb-actual-category";
+        const heading = document.createElement("h4"); heading.textContent = cap(cat);
+        const list = document.createElement("ul"); list.className = "bb-actual-list";
+        entries.forEach(({ item, entry, entryIndex }) => {
+          const row = document.createElement("li"); row.className = "bb-actual-entry";
+          const label = document.createElement("span");
+          label.textContent = `${item.name} · ${fmtDay(entry.date)}, ${parts(entry.date)[0]} · ${money(entry.amount)}`;
+          const edit = document.createElement("button"); edit.type = "button"; edit.textContent = "Edit";
+          edit.addEventListener("click", async () => {
+            const updated = await askActualEntry(entry);
+            if (updated) await editActualEntry(item, entryIndex, updated);
+          });
+          const remove = document.createElement("button"); remove.type = "button";
+          remove.className = "bb-actual-delete"; remove.textContent = "Delete";
+          remove.addEventListener("click", () => deleteActualEntry(item, entryIndex));
+          row.append(label, edit, remove); list.append(row);
+        });
+        section.append(heading, list); actualHistory.append(section);
+      });
+      if (!entryCount) {
+        const empty = document.createElement("p");
+        empty.textContent = plan.start && plan.end
+          ? "No actual expenses have been recorded in this period yet."
+          : "Select a date range to record and manage actual expenses.";
+        actualHistory.append(empty);
+      }
       const t = res.totals, tf = $$(".expense-table tfoot td");
       tf[0].textContent = money(t.budget); tf[1].textContent = money(t.actual);
       leftCell(tf[2], t.budget, t.actual, res.entered_any);
@@ -710,7 +749,7 @@
       if (a[0]) a[0].textContent = peso(res.income, 2, " ");
       if (a[1]) a[1].textContent = peso(t.balance, 2, " ");
       const note = $("#table-note");
-      if (note) note.textContent = `Edit a Budget value to replace it. To record an Actual, enter the new expense amount and press Enter; it is added to the displayed period total. Open Recorded entries under an item to edit or delete a specific actual. Actuals are saved only to this selected period. ` +
+      if (note) note.textContent = `Edit a Budget value to replace it. Enter an additional expense in the Actual field and press Enter; the period total updates. Use the Recorded actual expenses section below to edit or delete an individual entry. Actuals are saved only to this selected period. ` +
         `Limits are ${money(res.categories.needs.limit)} (50%) for needs, ${money(res.categories.wants.limit)} (30%) for wants and ${money(res.categories.savings.limit)} (20%) for savings, based on this period's income. Left appears after you enter an Actual.`;
       periodLabel(); redrawCal();
       renderReco(res, $(".tracker"));
