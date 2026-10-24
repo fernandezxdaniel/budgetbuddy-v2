@@ -588,11 +588,14 @@
       if (actual === 0) td.style.color = NEUTRAL;
       else td.style.color = left > 0 ? GREEN : RED;
     }
-    function cellInput(value, label, onCommit) {
+    function cellInput(value, label, onCommit, commitOnEnter = false) {
       const inp = document.createElement("input");
       inp.type = "number"; inp.className = "bb-cell"; inp.min = "0"; inp.step = "0.01"; inp.max = "1000000000";
       inp.value = Number(value).toFixed(2); inp.setAttribute("aria-label", label);
       inp.addEventListener("focus", () => inp.select());
+      if (commitOnEnter) inp.addEventListener("keydown", e => {
+        if (e.key === "Enter") { e.preventDefault(); inp.blur(); }
+      });
       inp.addEventListener("change", () => {
         const v = Number(inp.value);
         if (inp.value === "" || !Number.isFinite(v) || v < 0) { alert("Please enter an amount of 0 or more."); render(); return; }
@@ -604,13 +607,16 @@
       if (v !== it.budget) await savePlan({ ...plan, items: plan.items.map(i => i.id === it.id ? { ...i, budget: v } : i) });
       render();
     }
-    async function editActual(it, v) {          // each change is stored as a dated entry (feeds the segment tree)
-      if (!it.entered || v !== it.actual) {
-        const currentDay = todayISO();
-        const entryDay = currentDay < plan.start ? plan.start : currentDay > plan.end ? plan.end : currentDay;
-        const entry = { date: entryDay, amount: r2(v - it.actual) };
-        await savePlan({ ...plan, items: plan.items.map(i => i.id === it.id ? { ...i, log: addLog(i.log, entry) } : i) });
+    async function addActual(it, amount) {
+      if (!plan.start || !plan.end) {
+        alert("Select a date range before entering actual amounts.");
+        render();
+        return;
       }
+      const currentDay = todayISO();
+      const entryDay = currentDay < plan.start ? plan.start : currentDay > plan.end ? plan.end : currentDay;
+      const entry = { date: entryDay, amount };
+      await savePlan({ ...plan, items: plan.items.map(i => i.id === it.id ? { ...i, log: addLog(i.log, entry) } : i) });
       render();
     }
  
@@ -627,7 +633,8 @@
           const tr = document.createElement("tr"); tr.className = "bb-item-row";
           const th = document.createElement("th"); th.scope = "row"; th.textContent = it.name;
           const tdB = document.createElement("td"); tdB.className = "number"; tdB.append(cellInput(it.budget, `${it.name} budget`, v => editBudget(it, v)));
-          const tdA = document.createElement("td"); tdA.className = "number"; tdA.append(cellInput(it.actual, `${it.name} actual`, v => editActual(it, v)));
+          const tdA = document.createElement("td"); tdA.className = "number";
+          tdA.append(cellInput(it.actual, `Enter an additional actual amount for ${it.name}; current period total ${money(it.actual)}`, v => addActual(it, v), true));
           const tdL = document.createElement("td"); tdL.className = "number";
           leftCell(tdL, it.budget, it.actual, it.entered);
           tr.append(th, tdB, tdA, tdL); anchor.after(tr); anchor = tr;
@@ -640,8 +647,8 @@
       if (a[0]) a[0].textContent = peso(res.income, 2, " ");
       if (a[1]) a[1].textContent = peso(t.balance, 2, " ");
       const note = $("#table-note");
-      if (note) note.textContent = `Click a Budget or Actual box to change this period. Limits are ${money(res.categories.needs.limit)} (50%) for needs, ` +
-        `${money(res.categories.wants.limit)} (30%) for wants and ${money(res.categories.savings.limit)} (20%) for savings, based on this period's income. Left appears after you enter an Actual.`;
+      if (note) note.textContent = `Edit a Budget value to replace it. To record an Actual, type the new expense amount and press Enter; it is added to the displayed period total. Actuals are saved only to this selected period. ` +
+        `Limits are ${money(res.categories.needs.limit)} (50%) for needs, ${money(res.categories.wants.limit)} (30%) for wants and ${money(res.categories.savings.limit)} (20%) for savings, based on this period's income. Left appears after you enter an Actual.`;
       periodLabel(); redrawCal();
       renderReco(res, $(".tracker"));
     }

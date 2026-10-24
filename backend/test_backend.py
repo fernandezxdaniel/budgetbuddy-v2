@@ -44,6 +44,15 @@ ITEMS = [
 ]
 norm = validate_plan(mk(items=ITEMS))
 r = calculate(norm, date(2026, 10, 16))
+incremental_actual = validate_plan(mk(items=[
+    it("needs", "Daily expenses", 1000, [
+        ("2026-10-15", 500),
+        ("2026-10-16", 300),
+    ])
+]))
+incremental_result = calculate(incremental_actual, date(2026, 10, 16))
+assert incremental_result["categories"]["needs"]["actual"] == 800
+assert incremental_result["categories"]["needs"]["left"] == 200
 decimal_income_plan = {**norm, "income": Decimal(norm["income"])}
 decimal_result = calculate(decimal_income_plan, date(2026, 10, 16))
 assert isinstance(decimal_result["categories"]["savings"]["limit"], float)
