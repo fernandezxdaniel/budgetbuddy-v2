@@ -189,16 +189,17 @@
       .bb-cell{width:100%;padding:6px 8px;border:1px solid #274258;border-radius:8px;background:#101f2c;color:#fff;font:inherit;font-size:14px;text-align:left}
       .bb-cell:focus{outline:2px solid #40c0e7}
       .bb-actual-total{display:block;margin-bottom:6px;font-weight:600}
-      .bb-actual-history{margin-top:18px;padding:16px;border:1px solid #2b303a;border-radius:14px;background:#10141b}
-      .bb-actual-history h3{margin:0 0 12px;font-size:15px}
-      .bb-actual-category{margin-top:12px}
-      .bb-actual-category h4{margin:0 0 6px;color:#a8b0be;font-size:12px;text-transform:uppercase;letter-spacing:.06em}
-      .bb-actual-list{list-style:none;margin:0;padding:0}
-      .bb-actual-entry{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid #2b303a;font-size:12px}
-      .bb-actual-entry span{flex:1;min-width:0}
-      .bb-actual-entry button{padding:5px 9px;border:1px solid #526174;border-radius:7px;background:transparent;color:#d9dfea;font:inherit;cursor:pointer}
-      .bb-actual-entry button:hover{background:#263449}
-      .bb-actual-entry .bb-actual-delete{border-color:#f97066;color:#f97066}
+      .bb-actual-entries{list-style:none;margin:0 0 8px;padding:0}
+      .bb-actual-entry{display:flex;align-items:center;gap:6px;padding:4px 0}
+      .bb-actual-entry-date{flex:0 0 auto;color:#a8b0be;font-size:11px}
+      .bb-actual-entry .bb-cell{min-width:0;padding:5px 6px;font-size:12px}
+      .bb-actual-delete{flex:0 0 28px;width:28px;height:28px;padding:0;border:1px solid #f97066;border-radius:50%;background:transparent;color:#f97066;font-size:18px;line-height:1;cursor:pointer}
+      .bb-actual-delete:hover{background:#f97066;color:#fff}
+      .bb-actual-delete:disabled,.bb-actual-add button:disabled{opacity:.5;cursor:not-allowed}
+      .bb-actual-add{display:flex;align-items:center;gap:6px}
+      .bb-actual-add .bb-cell{min-width:0}
+      .bb-actual-add button{flex:0 0 auto;padding:6px 9px;border:1px solid #526174;border-radius:7px;background:transparent;color:#d9dfea;font:inherit;font-size:12px;cursor:pointer}
+      .bb-actual-add button:hover{background:#263449}
       .bb-reco{margin-top:28px}
       .bb-reco h2{margin:0 0 6px;font-size:22px}
       .bb-stats{margin:0 0 14px;color:#596273;font-size:12px;line-height:1.7}
@@ -438,20 +439,6 @@
         $('input[name="amount"]', dlg).value = Number(existing.amount).toFixed(2);
       });
   }
-  function askActualEntry(existing) {
-    return dialog(`<form method="dialog"><h3>Edit actual entry</h3>
-      <p class="bb-hint">This changes only this recorded entry; the item's Actual total will update automatically.</p>
-      <label>Date<input name="date" type="date" min="${plan.start}" max="${plan.end}" required></label>
-      <label>Amount (\u20b1)<input name="amount" type="number" min="-1000000000" max="1000000000" step="0.01" required></label>
-      ${ROW}</form>`, f => ({
-        date: String(f.get("date")),
-        amount: Number(f.get("amount")),
-      }), dlg => {
-        $('input[name="date"]', dlg).value = existing.date;
-        $('input[name="amount"]', dlg).value = Number(existing.amount).toFixed(2);
-      });
-  }
- 
   /* ---------- dashboard page ---------- */
   function initDashboard() {
     const cards = $$(".budget-card");
@@ -601,11 +588,7 @@
     const GREEN = "#6ce9a6", RED = "#f97066", NEUTRAL = "#f8fafc", money = n => peso(n, 2);
     const catRows = $$(".expense-table tbody tr");
     const baseDesc = catRows.map(r => $(".category-description", r).textContent.trim());
-    const actualHistory = document.createElement("section");
-    actualHistory.className = "bb-actual-history";
-    actualHistory.setAttribute("aria-labelledby", "actual-history-title");
-    $("#table-note").insertAdjacentElement("afterend", actualHistory);
- 
+    let actualMutationBusy = false;
     // Left stays "-" until an Actual has been entered.
     function leftCell(td, budget, actual, entered) {
       if (!entered) { td.textContent = "\u2014"; td.style.color = NEUTRAL; return; }
@@ -614,26 +597,34 @@
       if (actual === 0) td.style.color = NEUTRAL;
       else td.style.color = left > 0 ? GREEN : RED;
     }
-    function cellInput(value, label, onCommit, commitOnEnter = false) {
+    function cellInput(value, label, onCommit, commitOnEnter = false, minimum = 0, placeholder = "") {
       const inp = document.createElement("input");
-      inp.type = "number"; inp.className = "bb-cell"; inp.min = "0"; inp.step = "0.01"; inp.max = "1000000000";
+      inp.type = "number"; inp.className = "bb-cell"; inp.min = String(minimum); inp.step = "0.01"; inp.max = "1000000000";
       inp.value = value === "" ? "" : Number(value).toFixed(2); inp.setAttribute("aria-label", label);
-      if (commitOnEnter) inp.placeholder = "Add expense";
+      inp.placeholder = placeholder;
       inp.addEventListener("focus", () => inp.select());
       let lastSubmitted = null;
       const commit = () => {
         const v = Number(inp.value);
-        if (inp.value === "" || !Number.isFinite(v) || v < (commitOnEnter ? 0.01 : 0)) {
-          alert(commitOnEnter ? "Please enter an expense amount greater than zero." : "Please enter an amount of 0 or more.");
+        if (inp.value === "" || !Number.isFinite(v) || v < minimum) {
+          alert(minimum > 0 ? "Please enter an expense amount greater than zero." : "Please enter an amount of 0 or more.");
           render();
           return;
         }
-        if (lastSubmitted === v) return;
+        if (lastSubmitted === v || actualMutationBusy) return;
         lastSubmitted = v;
         inp.disabled = true;
-        Promise.resolve(onCommit(r2(v))).catch(error => {
+        Promise.resolve(onCommit(r2(v))).then(saved => {
+          if (saved === false && inp.isConnected) {
+            inp.disabled = false;
+            lastSubmitted = null;
+          }
+        }).catch(error => {
           alert(error.message);
-          render();
+          if (inp.isConnected) {
+            inp.disabled = false;
+            lastSubmitted = null;
+          }
         });
       };
       inp.addEventListener("input", () => { lastSubmitted = null; });
@@ -650,32 +641,56 @@
     async function addActual(it, amount) {
       if (!plan.start || !plan.end) {
         alert("Select a date range before entering actual amounts.");
-        render();
-        return;
+        return false;
       }
       if (amount <= 0) {
         alert("Enter an expense amount greater than zero.");
-        render();
-        return;
+        return false;
       }
       const currentDay = todayISO();
       const entryDay = currentDay < plan.start ? plan.start : currentDay > plan.end ? plan.end : currentDay;
       const entry = { date: entryDay, amount };
-      await savePlan({ ...plan, items: plan.items.map(i => i.id === it.id ? { ...i, log: addLog(i.log, entry) } : i) });
-      render();
+      return saveActualChange(current => ({
+        ...current,
+        items: current.items.map(item => item.id === it.id ? { ...item, log: addLog(item.log, entry) } : item),
+      }));
     }
     async function editActualEntry(it, entryIndex, updatedEntry) {
-      const log = it.log.map((entry, index) => index === entryIndex ? updatedEntry : entry);
-      await savePlan({ ...plan, items: plan.items.map(i => i.id === it.id ? { ...i, log } : i) });
-      render();
+      const entry = it.log[entryIndex];
+      if (!entry || !plan.start || !plan.end || entry.date < plan.start || entry.date > plan.end) return false;
+      return saveActualChange(current => ({
+        ...current,
+        items: current.items.map(item => item.id === it.id
+          ? { ...item, log: item.log.map((savedEntry, index) => index === entryIndex ? updatedEntry : savedEntry) }
+          : item),
+      }));
     }
     async function deleteActualEntry(it, entryIndex) {
       const entry = it.log[entryIndex];
+      if (!entry || !plan.start || !plan.end || entry.date < plan.start || entry.date > plan.end) return;
       if (!confirm(`Delete the ${money(entry.amount)} actual recorded for ${it.name} on ${fmtDay(entry.date)}?`))
         return;
-      const log = it.log.filter((_, index) => index !== entryIndex);
-      await savePlan({ ...plan, items: plan.items.map(i => i.id === it.id ? { ...i, log } : i) });
-      render();
+      await saveActualChange(current => ({
+        ...current,
+        items: current.items.map(item => item.id === it.id
+          ? { ...item, log: item.log.filter((_, index) => index !== entryIndex) }
+          : item),
+      }));
+    }
+    async function saveActualChange(makePlan) {
+      if (actualMutationBusy) return false;
+      actualMutationBusy = true;
+      $$(".bb-actual-control").forEach(control => { control.disabled = true; });
+      try {
+        if (!await savePlan(makePlan(plan))) return false;
+        render();
+        return true;
+      } finally {
+        actualMutationBusy = false;
+        $$(".bb-actual-control").forEach(control => {
+          control.disabled = !plan.start || !plan.end;
+        });
+      }
     }
  
     function render() {
@@ -696,52 +711,40 @@
           const tdA = document.createElement("td"); tdA.className = "number";
           const actualTotal = document.createElement("span"); actualTotal.className = "bb-actual-total";
           actualTotal.textContent = money(it.actual);
-          const actualInput = cellInput("", `Enter an additional actual amount for ${it.name}; current period total ${money(it.actual)}`, v => addActual(savedItem, v), true);
-          actualInput.disabled = !plan.start || !plan.end;
-          tdA.append(actualTotal, actualInput);
+          const actualEntries = document.createElement("ul"); actualEntries.className = "bb-actual-entries";
+          savedItem.log.forEach((entry, entryIndex) => {
+            if (!plan.start || !plan.end || entry.date < plan.start || entry.date > plan.end) return;
+            const entryRow = document.createElement("li"); entryRow.className = "bb-actual-entry";
+            const date = document.createElement("span"); date.className = "bb-actual-entry-date";
+            date.textContent = `${fmtDay(entry.date)} ·`;
+            const amount = cellInput(entry.amount, `Edit actual amount for ${it.name} on ${fmtDay(entry.date)}`, value =>
+              editActualEntry(savedItem, entryIndex, { ...entry, amount: value }), true, 0.01, "Amount");
+            amount.classList.add("bb-actual-control");
+            amount.disabled = !plan.start || !plan.end || actualMutationBusy;
+            const remove = document.createElement("button"); remove.type = "button";
+            remove.className = "bb-actual-delete bb-actual-control"; remove.textContent = "\u00d7";
+            remove.disabled = !plan.start || !plan.end || actualMutationBusy;
+            remove.title = `Delete ${money(entry.amount)} from ${it.name} on ${fmtDay(entry.date)}`;
+            remove.setAttribute("aria-label", `Delete actual ${money(entry.amount)} for ${it.name} on ${fmtDay(entry.date)}`);
+            remove.addEventListener("click", () => deleteActualEntry(savedItem, entryIndex));
+            entryRow.append(date, amount, remove); actualEntries.append(entryRow);
+          });
+          const actualInput = cellInput("", `Enter a new actual expense for ${it.name}`, v => addActual(savedItem, v), true, 0.01, "Enter new expense");
+          actualInput.classList.add("bb-actual-control");
+          actualInput.disabled = !plan.start || !plan.end || actualMutationBusy;
+          const addRow = document.createElement("div"); addRow.className = "bb-actual-add";
+          const addButton = document.createElement("button"); addButton.type = "button"; addButton.className = "bb-actual-control"; addButton.textContent = "Add";
+          addButton.disabled = actualInput.disabled;
+          addButton.addEventListener("click", () => {
+            if (!actualInput.disabled) actualInput.dispatchEvent(new Event("change"));
+          });
+          addRow.append(actualInput, addButton);
+          tdA.append(actualTotal, actualEntries, addRow);
           const tdL = document.createElement("td"); tdL.className = "number";
           leftCell(tdL, it.budget, it.actual, it.entered);
           tr.append(th, tdB, tdA, tdL); anchor.after(tr); anchor = tr;
         });
       });
-      const historyTitle = document.createElement("h3");
-      historyTitle.id = "actual-history-title";
-      historyTitle.textContent = "Recorded actual expenses";
-      actualHistory.replaceChildren(historyTitle);
-      let entryCount = 0;
-      CATS.forEach(cat => {
-        const categoryItems = plan.items.filter(item => item.category === cat);
-        const entries = categoryItems.flatMap(item => item.log
-          .map((entry, entryIndex) => ({ item, entry, entryIndex }))
-          .filter(({ entry }) => plan.start && plan.end && entry.date >= plan.start && entry.date <= plan.end));
-        if (!entries.length) return;
-        entryCount += entries.length;
-        const section = document.createElement("section"); section.className = "bb-actual-category";
-        const heading = document.createElement("h4"); heading.textContent = cap(cat);
-        const list = document.createElement("ul"); list.className = "bb-actual-list";
-        entries.forEach(({ item, entry, entryIndex }) => {
-          const row = document.createElement("li"); row.className = "bb-actual-entry";
-          const label = document.createElement("span");
-          label.textContent = `${item.name} · ${fmtDay(entry.date)}, ${parts(entry.date)[0]} · ${money(entry.amount)}`;
-          const edit = document.createElement("button"); edit.type = "button"; edit.textContent = "Edit";
-          edit.addEventListener("click", async () => {
-            const updated = await askActualEntry(entry);
-            if (updated) await editActualEntry(item, entryIndex, updated);
-          });
-          const remove = document.createElement("button"); remove.type = "button";
-          remove.className = "bb-actual-delete"; remove.textContent = "Delete";
-          remove.addEventListener("click", () => deleteActualEntry(item, entryIndex));
-          row.append(label, edit, remove); list.append(row);
-        });
-        section.append(heading, list); actualHistory.append(section);
-      });
-      if (!entryCount) {
-        const empty = document.createElement("p");
-        empty.textContent = plan.start && plan.end
-          ? "No actual expenses have been recorded in this period yet."
-          : "Select a date range to record and manage actual expenses.";
-        actualHistory.append(empty);
-      }
       const t = res.totals, tf = $$(".expense-table tfoot td");
       tf[0].textContent = money(t.budget); tf[1].textContent = money(t.actual);
       leftCell(tf[2], t.budget, t.actual, res.entered_any);
@@ -749,7 +752,7 @@
       if (a[0]) a[0].textContent = peso(res.income, 2, " ");
       if (a[1]) a[1].textContent = peso(t.balance, 2, " ");
       const note = $("#table-note");
-      if (note) note.textContent = `Edit a Budget value to replace it. Enter an additional expense in the Actual field and press Enter; the period total updates. Use the Recorded actual expenses section below to edit or delete an individual entry. Actuals are saved only to this selected period. ` +
+      if (note) note.textContent = `Edit a Budget value to replace it. Add expenses in the Actual column; edit an entry's amount directly or use its X button to delete it. Only entries within the selected date range are shown and managed. ` +
         `Limits are ${money(res.categories.needs.limit)} (50%) for needs, ${money(res.categories.wants.limit)} (30%) for wants and ${money(res.categories.savings.limit)} (20%) for savings, based on this period's income. Left appears after you enter an Actual.`;
       periodLabel(); redrawCal();
       renderReco(res, $(".tracker"));
