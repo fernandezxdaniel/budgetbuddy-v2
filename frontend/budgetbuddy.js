@@ -188,6 +188,15 @@
       .bb-item-row td{padding:12px!important;font-size:15px!important}
       .bb-cell{width:100%;padding:6px 8px;border:1px solid #274258;border-radius:8px;background:#101f2c;color:#fff;font:inherit;font-size:14px;text-align:left}
       .bb-cell:focus{outline:2px solid #40c0e7}
+      .bb-actual-total{display:block;margin-bottom:6px;font-weight:600}
+      .bb-actual-entries{margin-top:7px;font-size:11px}
+      .bb-actual-entries summary{color:#a8b0be;cursor:pointer}
+      .bb-actual-entries ul{list-style:none;margin:5px 0 0;padding:0}
+      .bb-actual-entry{display:flex;align-items:center;gap:5px;padding:4px 0}
+      .bb-actual-entry span{flex:1;min-width:0}
+      .bb-actual-entry button{padding:3px 6px;border:1px solid #526174;border-radius:6px;background:transparent;color:#d9dfea;font:inherit;cursor:pointer}
+      .bb-actual-entry button:hover{background:#263449}
+      .bb-actual-entry .bb-actual-delete{border-color:#f97066;color:#f97066}
       .bb-reco{margin-top:28px}
       .bb-reco h2{margin:0 0 6px;font-size:22px}
       .bb-stats{margin:0 0 14px;color:#596273;font-size:12px;line-height:1.7}
@@ -427,6 +436,19 @@
         $('input[name="amount"]', dlg).value = Number(existing.amount).toFixed(2);
       });
   }
+  function askActualEntry(existing) {
+    return dialog(`<form method="dialog"><h3>Edit actual entry</h3>
+      <p class="bb-hint">This changes only this recorded entry; the item's Actual total will update automatically.</p>
+      <label>Date<input name="date" type="date" min="${plan.start}" max="${plan.end}" required></label>
+      <label>Amount (\u20b1)<input name="amount" type="number" min="-1000000000" max="1000000000" step="0.01" required></label>
+      ${ROW}</form>`, f => ({
+        date: String(f.get("date")),
+        amount: Number(f.get("amount")),
+      }), dlg => {
+        $('input[name="date"]', dlg).value = existing.date;
+        $('input[name="amount"]', dlg).value = Number(existing.amount).toFixed(2);
+      });
+  }
  
   /* ---------- dashboard page ---------- */
   function initDashboard() {
@@ -567,10 +589,8 @@
   }
  
   /* ---------- Expenses Tracker page ---------- */
-  function addLog(log, entry) {                 // merge entries of the same day so the list stays short
-    const m = new Map();
-    [...log, entry].forEach(e => m.set(e.date, r2((m.get(e.date) || 0) + e.amount)));
-    return [...m].map(([date, amount]) => ({ date, amount }));
+  function addLog(log, entry) {
+    return [...log, entry];
   }
  
   function initTracker() {
@@ -591,7 +611,8 @@
     function cellInput(value, label, onCommit, commitOnEnter = false) {
       const inp = document.createElement("input");
       inp.type = "number"; inp.className = "bb-cell"; inp.min = "0"; inp.step = "0.01"; inp.max = "1000000000";
-      inp.value = Number(value).toFixed(2); inp.setAttribute("aria-label", label);
+      inp.value = value === "" ? "" : Number(value).toFixed(2); inp.setAttribute("aria-label", label);
+      if (commitOnEnter) inp.placeholder = "Add expense";
       inp.addEventListener("focus", () => inp.select());
       if (commitOnEnter) inp.addEventListener("keydown", e => {
         if (e.key === "Enter") { e.preventDefault(); inp.blur(); }
@@ -613,10 +634,28 @@
         render();
         return;
       }
+      if (amount <= 0) {
+        alert("Enter an expense amount greater than zero.");
+        render();
+        return;
+      }
       const currentDay = todayISO();
       const entryDay = currentDay < plan.start ? plan.start : currentDay > plan.end ? plan.end : currentDay;
       const entry = { date: entryDay, amount };
       await savePlan({ ...plan, items: plan.items.map(i => i.id === it.id ? { ...i, log: addLog(i.log, entry) } : i) });
+      render();
+    }
+    async function editActualEntry(it, entryIndex, updatedEntry) {
+      const log = it.log.map((entry, index) => index === entryIndex ? updatedEntry : entry);
+      await savePlan({ ...plan, items: plan.items.map(i => i.id === it.id ? { ...i, log } : i) });
+      render();
+    }
+    async function deleteActualEntry(it, entryIndex) {
+      const entry = it.log[entryIndex];
+      if (!confirm(`Delete the ${money(entry.amount)} actual recorded for ${it.name} on ${fmtDay(entry.date)}?`))
+        return;
+      const log = it.log.filter((_, index) => index !== entryIndex);
+      await savePlan({ ...plan, items: plan.items.map(i => i.id === it.id ? { ...i, log } : i) });
       render();
     }
  
@@ -634,7 +673,31 @@
           const th = document.createElement("th"); th.scope = "row"; th.textContent = it.name;
           const tdB = document.createElement("td"); tdB.className = "number"; tdB.append(cellInput(it.budget, `${it.name} budget`, v => editBudget(it, v)));
           const tdA = document.createElement("td"); tdA.className = "number";
-          tdA.append(cellInput(it.actual, `Enter an additional actual amount for ${it.name}; current period total ${money(it.actual)}`, v => addActual(it, v), true));
+          const actualTotal = document.createElement("span"); actualTotal.className = "bb-actual-total";
+          actualTotal.textContent = money(it.actual);
+          tdA.append(actualTotal, cellInput("", `Enter an additional actual amount for ${it.name}; current period total ${money(it.actual)}`, v => addActual(it, v), true));
+          if (it.log.length) {
+            const details = document.createElement("details"); details.className = "bb-actual-entries";
+            const summary = document.createElement("summary"); summary.textContent = `Recorded entries (${it.log.length})`;
+            const list = document.createElement("ul");
+            it.log.forEach((entry, entryIndex) => {
+              const entryRow = document.createElement("li"); entryRow.className = "bb-actual-entry";
+              const label = document.createElement("span");
+              label.textContent = `${fmtDay(entry.date)}, ${parts(entry.date)[0]} · ${money(entry.amount)}`;
+              const edit = document.createElement("button"); edit.type = "button"; edit.textContent = "Edit";
+              edit.setAttribute("aria-label", `Edit ${it.name} actual ${entryIndex + 1}`);
+              edit.addEventListener("click", async () => {
+                const updated = await askActualEntry(entry);
+                if (updated) await editActualEntry(it, entryIndex, updated);
+              });
+              const remove = document.createElement("button"); remove.type = "button";
+              remove.className = "bb-actual-delete"; remove.textContent = "Delete";
+              remove.setAttribute("aria-label", `Delete ${it.name} actual ${entryIndex + 1}`);
+              remove.addEventListener("click", () => deleteActualEntry(it, entryIndex));
+              entryRow.append(label, edit, remove); list.append(entryRow);
+            });
+            details.append(summary, list); tdA.append(details);
+          }
           const tdL = document.createElement("td"); tdL.className = "number";
           leftCell(tdL, it.budget, it.actual, it.entered);
           tr.append(th, tdB, tdA, tdL); anchor.after(tr); anchor = tr;
@@ -647,7 +710,7 @@
       if (a[0]) a[0].textContent = peso(res.income, 2, " ");
       if (a[1]) a[1].textContent = peso(t.balance, 2, " ");
       const note = $("#table-note");
-      if (note) note.textContent = `Edit a Budget value to replace it. To record an Actual, type the new expense amount and press Enter; it is added to the displayed period total. Actuals are saved only to this selected period. ` +
+      if (note) note.textContent = `Edit a Budget value to replace it. To record an Actual, enter the new expense amount and press Enter; it is added to the displayed period total. Open Recorded entries under an item to edit or delete a specific actual. Actuals are saved only to this selected period. ` +
         `Limits are ${money(res.categories.needs.limit)} (50%) for needs, ${money(res.categories.wants.limit)} (30%) for wants and ${money(res.categories.savings.limit)} (20%) for savings, based on this period's income. Left appears after you enter an Actual.`;
       periodLabel(); redrawCal();
       renderReco(res, $(".tracker"));

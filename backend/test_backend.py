@@ -47,7 +47,8 @@ r = calculate(norm, date(2026, 10, 16))
 incremental_actual = validate_plan(mk(items=[
     it("needs", "Daily expenses", 1000, [
         ("2026-10-15", 500),
-        ("2026-10-16", 300),
+        ("2026-10-16", 200),
+        ("2026-10-16", 100),
     ])
 ]))
 incremental_result = calculate(incremental_actual, date(2026, 10, 16))
@@ -124,6 +125,11 @@ except DuplicateEmail:
 assert db.load_plan(uid)["items"] == []
 db.save_plan(uid, norm)
 assert Database(url).load_plan(uid) == norm               # a brand-new connection still sees it: it was SAVED
+db.save_plan(uid, incremental_actual)
+round_trip_actuals = Database(url).load_plan(uid)
+assert round_trip_actuals == incremental_actual
+assert len(round_trip_actuals["items"][0]["log"]) == 3
+assert calculate(round_trip_actuals, date(2026, 10, 16))["categories"]["needs"]["actual"] == 800
 smaller = validate_plan(mk(items=ITEMS[:2]))
 db.save_plan(uid, smaller); assert db.load_plan(uid) == smaller
 november = validate_plan(mk(income=12000, start="2026-11-01", end="2026-11-30",
